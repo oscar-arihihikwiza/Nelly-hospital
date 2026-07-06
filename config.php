@@ -58,5 +58,7 @@ $ROLE_PERMISSIONS = [
     'discharge' => ['admin', 'doctor', 'nurse'],
     'finance' => ['admin', 'billing'],
     'otc' => ['admin', 'pharmacy', 'billing', 'reception'],
+    'staff' => ['admin'], // Only admin can access staff management
+    'backup' => ['admin'], // Only admin can access backup & restore
 ];
 ?>

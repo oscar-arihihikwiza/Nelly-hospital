@@ -563,9 +563,144 @@
   </div>
 </div></div>
 
+<!-- MODAL: BILLING -->
+<div class="ov" id="ov-bill"><div class="modal" style="max-width:820px">
+  <div class="mh"><div><h3 id="bill-mtit">Create Invoice / Receipt</h3><p>HAK Medical &amp; Physiotherapy Center</p></div><div class="fxc"><div class="edit-mode-badge" id="bill-editbadge" style="display:none;background:var(--wn);color:white;padding:2px 9px;border-radius:99px;font-size:11px;font-weight:600">Editing</div><button class="btn btng xs" onclick="closeOv('ov-bill')">✕</button></div></div>
+  <div class="mb">
+    <div class="g2 mb12">
+      <div class="fg gall"><label class="fl">Patient *</label><select class="fs" id="bl-p"></select></div>
+      <div class="fg"><label class="fl">Invoice Date</label><input class="fi" type="date" id="bl-d"></div>
+      <div class="fg">
+  <label class="fl">Status (auto-updates from payments)</label>
+  <div style="background:var(--iv2);border:1.5px solid var(--iv3);border-radius:var(--r);padding:9px 11px;display:flex;align-items:center;gap:8px">
+    <span id="bl-s-dot" style="width:10px;height:10px;border-radius:50%;background:var(--wa);display:inline-block;flex-shrink:0"></span>
+    <span id="bl-s-text" style="font-size:13px;font-weight:600;color:var(--tx)">Unpaid</span>
+    <select class="fs" id="bl-s" style="display:none"><option>Unpaid</option><option>Paid</option><option>Partial</option></select>
+    <span style="font-size:10.5px;color:var(--tx3);margin-left:auto">Set automatically</span>
+  </div>
+</div>
+    </div>
+
+    <!-- ── INVOICE ITEMS ── -->
+    <div class="stit">Invoice Items</div>
+    <div id="bl-rows"></div>
+    <button class="btn btno sm mb12" onclick="addBillRow()">+ Add Item</button>
+    <!-- Grand total bar -->
+    <div style="background:var(--t7);border-radius:var(--r);padding:11px 16px;margin-bottom:14px;display:flex;justify-content:space-between;align-items:center">
+      <span style="font-size:12px;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.07em">Grand Total</span>
+      <span id="bltot" style="font-family:var(--fs);font-size:22px;font-weight:700;color:white">UGX 0</span>
+    </div>
+
+    <!-- ── PAYMENTS RECEIVED ── -->
+    <div style="background:var(--okb);border:1px solid var(--t1);border-radius:9px;padding:12px 14px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:9px">
+        <div>
+          <span style="font-size:10.5px;font-weight:700;color:var(--ok);text-transform:uppercase;letter-spacing:.07em">💳 Payments Received</span>
+          <span style="font-size:11px;color:var(--tx3);margin-left:7px">— one row per instalment, method or payer (e.g. Cash + NHIF + Balance later)</span>
+        </div>
+        <button class="btn btns xs" onclick="addPayRow()" style="font-size:11px">+ Add Payment</button>
+      </div>
+      <div id="bl-pay-rows"></div>
+      <div style="margin-top:8px;font-size:11px;color:var(--tx3)">
+        💡 Add multiple rows to split payment: e.g. UGX 50,000 Cash + UGX 30,000 Mobile Money. 
+        Leave empty if not yet paid (status will be set to Unpaid automatically).
+      </div>
+    </div>
+
+    <!-- Summary cards -->
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px">
+      <div style="background:var(--t0);border-radius:var(--r);padding:10px 13px;text-align:center">
+        <div style="font-size:10px;color:var(--t7);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Total Billed</div>
+        <div id="bl-tot-disp" style="font-family:var(--fs);font-size:18px;font-weight:700;color:var(--t7)">UGX 0</div>
+      </div>
+      <div style="background:var(--okb);border-radius:var(--r);padding:10px 13px;text-align:center">
+        <div style="font-size:10px;color:var(--ok);text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px">Total Paid</div>
+        <div id="bl-pd-disp" style="font-family:var(--fs);font-size:18px;font-weight:700;color:var(--ok)">UGX 0</div>
+      </div>
+      <div style="border-radius:var(--r);padding:10px 13px;text-align:center" id="bl-bal-card">
+        <div style="font-size:10px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px" id="bl-bal-lbl">Balance Due</div>
+        <div id="bl-ba-disp" style="font-family:var(--fs);font-size:18px;font-weight:700">UGX 0</div>
+      </div>
+    </div>
+    <div class="fg"><label class="fl">Notes</label><textarea class="ft" id="bl-n" style="min-height:40px" placeholder="Any additional notes…"></textarea></div>
+  </div>
+  <div class="mf"><button class="btn btng" onclick="closeOv('ov-bill')">Cancel</button><button class="btn btno" onclick="saveBill(true)">🖨 Save &amp; Print Receipt</button><button class="btn btnp" onclick="saveBill(false)">Save Invoice</button></div>
+</div></div>
+
+<!-- MODAL: RECORD PAYMENT (quick payment against existing invoice) -->
+<div class="ov" id="ov-rp"><div class="modal" style="max-width:520px">
+  <div class="mh">
+    <div>
+      <h3>💳 Record Payment</h3>
+      <p>Add a payment to an existing invoice</p>
+    </div>
+    <button class="btn btng xs" onclick="closeOv('ov-rp')">✕</button>
+  </div>
+  <div class="mb">
+    <!-- Invoice Summary -->
+    <div style="background:var(--t0);border:1px solid var(--t1);border-radius:11px;padding:13px 16px;margin-bottom:14px">
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+        <div>
+          <div style="font-size:9.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Invoice</div>
+          <div style="font-weight:700;color:var(--t7)" id="rp-ref">—</div>
+        </div>
+        <div>
+          <div style="font-size:9.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Patient</div>
+          <div style="font-weight:500;font-size:13px" id="rp-patient">—</div>
+        </div>
+        <div>
+          <div style="font-size:9.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Total Billed</div>
+          <div style="font-weight:700;color:var(--t7);font-family:var(--fs)" id="rp-tot">UGX 0</div>
+        </div>
+        <div>
+          <div style="font-size:9.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Already Paid</div>
+          <div style="font-weight:700;color:var(--ok);font-family:var(--fs)" id="rp-paid">UGX 0</div>
+        </div>
+        <div style="grid-column:span 2">
+          <div style="font-size:9.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px">Outstanding Balance</div>
+          <div style="font-weight:700;font-size:18px;font-family:var(--fs)" id="rp-bal">UGX 0</div>
+        </div>
+      </div>
+    </div>
+    <!-- Payment history -->
+    <div id="rp-history" style="margin-bottom:14px"></div>
+    <!-- New payment entry -->
+    <div class="stit">New Payment</div>
+    <div class="g2 mb12">
+      <div class="fg">
+        <label class="fl">Amount (UGX) *</label>
+        <input class="fi" type="number" id="rp-amount" placeholder="0" min="1" style="font-size:16px;font-weight:600;color:var(--ok)">
+      </div>
+      <div class="fg">
+        <label class="fl">Date Paid</label>
+        <input class="fi" type="date" id="rp-date">
+      </div>
+      <div class="fg">
+        <label class="fl">Payment Method *</label>
+        <select class="fs" id="rp-method">
+          <option>Cash</option>
+          <option>Mobile Money</option>
+          <option>NHIF</option>
+          <option>Insurance</option>
+          <option>Bank Transfer</option>
+          <option>Credit</option>
+        </select>
+      </div>
+      <div class="fg">
+        <label class="fl">Reference / Transaction ID</label>
+        <input class="fi" id="rp-ref-note" placeholder="Receipt no., mobile money transaction ID…">
+      </div>
+    </div>
+  </div>
+  <div class="mf">
+    <button class="btn btng" onclick="closeOv('ov-rp')">Cancel</button>
+    <button class="btn btnp" onclick="saveRecordPayment()">✓ Record Payment</button>
+  </div>
+</div></div>
+
 <!-- Bootstrap JS -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<!-- Link Consolidated JavaScript -->
-<script src="app.js"></script>
+<!-- app.js with cache-busting timestamp -->
+<script src="app.js?v=<?php echo time(); ?>"></script>
 </body>
 </html>

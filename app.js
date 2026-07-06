@@ -1,23 +1,20 @@
-'use strict';
 /* ── AUTH ── */
-const ACCS={'admin':{pass:'admin123',role:'admin',name:'Administrator'},'dr.karim':{pass:'karim123',role:'doctor',name:'Dr. Karim'},'nurse1':{pass:'nurse123',role:'nurse',name:'Nurse Faith'},'lab1':{pass:'lab123',role:'lab',name:'Lab Tech Moses'},'reception':{pass:'recep123',role:'reception',name:'Reception Aisha'},'pharmacy':{pass:'pharm123',role:'pharmacy',name:'Pharmacist James'},'billing':{pass:'bill123',role:'billing',name:'Billing Officer'}};
-let CU=null;
+var ACCS={'admin':{pass:'admin123',role:'admin',name:'Administrator'},'dr.karim':{pass:'karim123',role:'doctor',name:'Dr. Karim'},'nurse1':{pass:'nurse123',role:'nurse',name:'Nurse Faith'},'lab1':{pass:'lab123',role:'lab',name:'Lab Tech Moses'},'reception':{pass:'recep123',role:'reception',name:'Reception Aisha'},'pharmacy':{pass:'pharm123',role:'pharmacy',name:'Pharmacist James'},'billing':{pass:'bill123',role:'billing',name:'Billing Officer'}};
+var CU = null;
 function doLogin(){
-  const u=V('lu').trim().toLowerCase(),p=V('lp'),r=V('lr');
-  const a=ACCS[u];
-  if(!a||a.pass!==p||(r&&a.role!==r)){document.getElementById('lerr').style.display='block';return;}
-  document.getElementById('lerr').style.display='none';
+  var u=V('lu').trim().toLowerCase(),p=V('lp'),r=V('lr');
+  var a=ACCS[u];
+  if(!a||a.pass!==p||(r&&a.role!==r)){var el=document.getElementById('lerr');if(el)el.style.display='block';return;}
+  var el2=document.getElementById('lerr');if(el2)el2.style.display='none';
   CU={username:u,name:a.name,role:a.role};sessionStorage.setItem('hak_u',JSON.stringify(CU));bootApp();
 }
-document.getElementById('lp').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin();});
-function doLogout(){sessionStorage.removeItem('hak_u');CU=null;switchScr('sl');}
-
+function doLogout(){sessionStorage.removeItem('hak_u');CU=null;window.location.href='logout.php';}
 /* ── SCREENS ── */
-function switchScr(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('active'));document.getElementById(id).classList.add('active');}
+function switchScr(id){}
 
 /* ── DB ── */
 // Map app.js keys to SQLite table names
-const KEY_MAP = {
+var KEY_MAP = {
   'patients': 'patients',
   'appointments': 'appointments',
   'encounters': 'encounters',
@@ -28,8 +25,8 @@ const KEY_MAP = {
   'us_rep': 'us_reports',
   'rx': 'prescriptions',
   'dis': 'dispensing_log',
-  'billing': 'billing',
-  'discharge': 'discharge',
+  'billing': 'billing_invoices',
+  'discharge': 'discharge_summaries',
   'otc_sales': 'otc_sales',
   'manual_income': 'manual_income',
   'expenses': 'expenses',
@@ -37,40 +34,69 @@ const KEY_MAP = {
 };
 
 // Local cache of server data
-let LOCAL_DB = {};
+var LOCAL_DB = {};
 
 // Initialize LOCAL_DB from SERVER_DB
 function initDB() {
-  for (const [appKey, tableKey] of Object.entries(KEY_MAP)) {
-    LOCAL_DB[appKey] = SERVER_DB[tableKey] || [];
+  var src = (typeof SERVER_DB !== 'undefined') ? SERVER_DB : {};
+  for (var appKey in KEY_MAP) {
+    var tableKey = KEY_MAP[appKey];
+    LOCAL_DB[appKey] = src[tableKey] || [];
   }
 }
 
-// Initialize on load
 initDB();
 
-const DB={
-  get(k){
-    return LOCAL_DB[k] || [];
-  },
-  set(k,v){
+var DB={
+  get:function(k){ return LOCAL_DB[k] || []; },
+  set:function(k,v){
     LOCAL_DB[k] = v;
-    const tableKey = KEY_MAP[k] || k;
-    // Send to server (fire and forget)
+    var tableKey = KEY_MAP[k] || k;
     try {
-      const formData = new FormData();
+      var formData = new FormData();
       formData.append('key', tableKey);
       formData.append('data', JSON.stringify(v));
-      fetch('api.php?action=save', {
-        method: 'POST',
-        body: formData
-      });
-    } catch (e) {
-      console.error('Failed to sync data:', e);
-    }
+      fetch('api.php?action=save', { method: 'POST', body: formData });
+    } catch(e) { console.error('Failed to sync data:', e); }
   },
-  id(){return Date.now().toString(36)+Math.random().toString(36).slice(2,5);}
+  id:function(){return Date.now().toString(36)+Math.random().toString(36).slice(2,5);}
 };
+
+function downloadBackup(){
+  // Alias for the full backup download
+  const a = document.createElement('a');
+  a.href = 'backup.php?action=download';
+  a.download = '';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  toast('Downloading backup…', 'success');
+}
+
+async function refreshDataFromServer(){
+  try {
+    var resp = await fetch('api.php?action=get');
+    if (!resp.ok) throw new Error('Server error ' + resp.status);
+    var serverData = await resp.json();
+    for (var appKey in KEY_MAP) {
+      var tableKey = KEY_MAP[appKey];
+      LOCAL_DB[appKey] = serverData[tableKey] || [];
+    }
+    // Re-render current page
+    var renderers = {
+      dashboard: renderDash, patients: renderPats, appointments: renderAppts,
+      encounters: renderEncs, ultrasound: renderUSReqs, laboratory: renderLabReqs,
+      pharmacy: renderRx, inventory: renderInv,
+      billing: function(){renderBill();renderBillStats();},
+      discharge: renderDC, otc: renderOTC, finance: renderFinance, staff: renderStaff
+    };
+    if(renderers[curPg]) renderers[curPg]();
+    toast('Data refreshed ✓', 'success');
+  } catch (e) {
+    console.error('Failed to refresh data:', e);
+    toast('Refresh failed — working offline', 'warn');
+  }
+}
 
 /* ── SEED ── */
 function seedDB(){
@@ -85,9 +111,19 @@ function agD(a){return(parseInt(a)||0)+'y';}
 function td(){return new Date().toISOString().slice(0,10);}
 function fm(n){return'UGX '+Number(n||0).toLocaleString();}
 function nRef(pfx,arr){const ns=arr.map(r=>parseInt((r.ref||'').replace(pfx+'-',''))||0);return pfx+'-'+String((ns.length?Math.max(...ns):0)+1).padStart(3,'0');}
-function toast(msg,tp=''){const t=document.getElementById('toast');t.textContent=msg;t.className='';if(tp==='success')t.classList.add('tok');else if(tp==='warn')t.classList.add('twn');else if(tp==='error')t.classList.add('ter');t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),3200);}
-function openOv(id){document.getElementById(id).classList.add('open');}
-function closeOv(id){document.getElementById(id).classList.remove('open');}
+function toast(msg,tp=''){
+  const t=document.getElementById('toast');
+  if(!t)return;
+  t.textContent=msg;t.className='';
+  if(tp==='success')t.classList.add('tok');
+  else if(tp==='warn')t.classList.add('twn');
+  else if(tp==='error')t.classList.add('ter');
+  t.classList.add('show');
+  clearTimeout(t._t);
+  t._t=setTimeout(()=>t.classList.remove('show'),3200);
+}
+function openOv(id){const el=document.getElementById(id);if(el)el.classList.add('open');}
+function closeOv(id){const el=document.getElementById(id);if(el)el.classList.remove('open');}
 document.addEventListener('click',e=>{if(e.target.classList.contains('ov'))e.target.classList.remove('open');});
 
 /* ── DELETE RECORD ── */
@@ -100,15 +136,8 @@ function delRec(key, id, refreshFn){
   toast('Entry deleted','warn');
 }
 
-/* ── BACKUP ── */
-function downloadBackup(){
-  const keys=['patients','encounters','appointments','inventory','lab_req','lab_rep','us_req','us_rep','rx','dis','billing','discharge','otc_sales','expenses','manual_income'];
-  const data={_exported:new Date().toISOString(),_system:'HAK Medical & Physiotherapy Center'};
-  keys.forEach(k=>data[k]=DB.get(k));
-  const b=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
-  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='HAK_Backup_'+td()+'.json';a.click();
-  toast('Backup downloaded','success');
-}
+/* ── BACKUP redirect ── */
+// downloadBackup() defined above — uses server-side backup.php
 
 /* ── PRINT HELPERS ── */
 function hakHdr(title,ref,date){return`<div style="display:flex;align-items:flex-start;justify-content:space-between;border-bottom:2.5px solid #2089ab;padding-bottom:14px;margin-bottom:16px"><div style="display:flex;align-items:center;gap:12px"><div style="background:#145369;width:46px;height:46px;border-radius:11px;display:flex;align-items:center;justify-content:center;flex-shrink:0"><svg viewBox="0 0 22 22" fill="none" width="24" height="24"><rect x="9" y="2" width="4" height="18" rx="2" fill="white"/><rect x="2" y="9" width="18" height="4" rx="2" fill="white"/></svg></div><div><div style="font-size:18px;font-weight:700;color:#0a2e3a;font-family:'Playfair Display',serif">HAK Medical &amp; Physiotherapy Center</div><div style="font-size:11px;color:#5a7a8a">30m off Gayaza Road to Magere &nbsp;|&nbsp; Tel: 0705 062 567 / 0773 029 999 &nbsp;|&nbsp; hakmedicalcenter@gmail.com</div></div></div><div style="text-align:right"><div style="font-size:14px;font-weight:700;color:#1a6b87;font-family:'Playfair Display',serif">${title}</div>${ref?`<div style="font-size:11px;color:#5a7a8a">Ref: <strong>${ref}</strong></div>`:''}${date?`<div style="font-size:11px;color:#5a7a8a">${fd(date)}</div>`:''}</div></div>`;}
@@ -143,6 +172,7 @@ const NAVS=[
   {id:'finance',    lb:'Finance',      ro:['admin','billing']},
   {id:'otc',        lb:'OTC Sales',     ro:['admin','pharmacy','billing','reception']},
   {id:'staff',      lb:'Staff Management', ro:['admin']},
+  {id:'backup',     lb:'Backup & Restore', ro:['admin']},
 ];
 const ICONS={
   dashboard:`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1.5"/><rect x="9" y="1" width="6" height="6" rx="1.5"/><rect x="1" y="9" width="6" height="6" rx="1.5"/><rect x="9" y="9" width="6" height="6" rx="1.5"/></svg>`,
@@ -158,39 +188,62 @@ const ICONS={
   finance:`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12V5a1 1 0 011-1h12a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1z"/><path d="M5 8h6M8 6v4" stroke-linecap="round"/><circle cx="8" cy="8" r="2.5"/></svg>`,
   discharge:`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h10a1 1 0 011 1v11l-3-2-2 2-2-2-3 2V3a1 1 0 011-1z"/><path d="M6 6h4M6 9h3" stroke-linecap="round"/></svg>`,
   otc:`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12l-1 9H3L2 4z"/><path d="M6 4V3a2 2 0 014 0v1M6 8h.01M10 8h.01" stroke-linecap="round"/></svg>`,
+  backup:`<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 8l3 3 3-3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12v1a1 1 0 001 1h10a1 1 0 001-1v-1" stroke-linecap="round"/></svg>`,
 };
-let curPg='dashboard';
+var curPg='dashboard';
 function buildNav(){
-  document.getElementById('sbnav').innerHTML='<div class="sbsec">Navigation</div>'+
-    NAVS.filter(n=>n.ro.includes(CU.role)).map(n=>`<div class="sbi${n.id===curPg?' on':''}" id="sbn-${n.id}" onclick="nav('${n.id}')"><div class="sbico">${ICONS[n.id]||''}</div>${n.lb}</div>`).join('');
+  var el=document.getElementById('sbnav');
+  if(!el)return;
+  el.innerHTML='<div class="sbsec">Navigation</div>'+
+    NAVS.filter(function(n){return CU&&n.ro.indexOf(CU.role)>-1;}).map(function(n){
+      return '<div class="sbi'+(n.id===curPg?' on':'')+'" id="sbn-'+n.id+'" onclick="nav(\''+n.id+'\')">'+'<div class="sbico">'+(ICONS[n.id]||'')+'</div>'+n.lb+'</div>';
+    }).join('');
 }
 function nav(pg){
+  if(pg==='backup'){window.location.href='backup.php';return;}
   curPg=pg;
-  document.querySelectorAll('.page').forEach(p=>p.classList.add('phide'));
-  document.getElementById('pg-'+pg)?.classList.remove('phide');
-  document.querySelectorAll('.sbi').forEach(i=>i.classList.remove('on'));
-  document.getElementById('sbn-'+pg)?.classList.add('on');
-  document.getElementById('tbtitle').textContent=NAVS.find(n=>n.id===pg)?.lb||pg;
-  ({dashboard:renderDash,patients:renderPats,appointments:renderAppts,encounters:renderEncs,
-    ultrasound:renderUSReqs,laboratory:renderLabReqs,pharmacy:renderRx,
-    inventory:renderInv,billing:()=>{renderBill();renderBillStats();},discharge:renderDC,otc:renderOTC,finance:renderFinance,staff:renderStaff})[pg]?.();
+  document.querySelectorAll('.page').forEach(function(p){p.classList.add('phide');});
+  var pgEl=document.getElementById('pg-'+pg);
+  if(pgEl)pgEl.classList.remove('phide');
+  document.querySelectorAll('.sbi').forEach(function(i){i.classList.remove('on');});
+  var sbnEl=document.getElementById('sbn-'+pg);
+  if(sbnEl)sbnEl.classList.add('on');
+  var tbtitle=document.getElementById('tbtitle');
+  if(tbtitle){
+    var nav_item=NAVS.find(function(n){return n.id===pg;});
+    if(nav_item)tbtitle.textContent=nav_item.lb;
+  }
+  try{
+    var renderers={
+      dashboard:renderDash,patients:renderPats,appointments:renderAppts,
+      encounters:renderEncs,ultrasound:renderUSReqs,laboratory:renderLabReqs,
+      pharmacy:renderRx,inventory:renderInv,
+      billing:function(){renderBill();renderBillStats();},
+      discharge:renderDC,otc:renderOTC,finance:renderFinance,staff:renderStaff
+    };
+    if(renderers[pg])renderers[pg]();
+  }catch(e){console.error('nav render error for '+pg+':',e);}
 }
 
 /* ── STAFF MANAGEMENT ── */
 function renderStaff(){
+  const stafftb=document.getElementById('stafftb');
+  if(!stafftb)return;
   let users = DB.get('users');
+  // Staff management shows ONLY staff (non-patient roles) — patients managed separately
+  users = users.filter(u => u.role !== 'patient');
   const q = V('staffsrch')?.toLowerCase() || '';
   if(q){
     users = users.filter(u => (u.name && u.name.toLowerCase().includes(q)) || (u.username && u.username.toLowerCase().includes(q)));
   }
-  document.getElementById('stafftb').innerHTML = users.length ? users.map((u, i) => `<tr>
+  stafftb.innerHTML = users.length ? users.map((u, i) => `<tr>
     <td>${i+1}</td>
     <td><strong>${u.username}</strong></td>
     <td>${u.name}</td>
     <td><span class="b bt">${u.role}</span></td>
     <td>${fd(u.created_at || u.created)}</td>
     <td style="white-space:nowrap">
-      ${u.id !== CU.id ? `<button class="btn btnd xs" onclick="deleteStaff('${u.id}')" title="Delete">🗑</button>` : '<span style="color:var(--tx3);font-size:12px;">Current User</span>'}
+      ${u.id != CU.id ? `<button class="btn btnd xs" onclick="deleteStaff('${u.id}')" title="Delete">🗑</button>` : '<span style="color:var(--tx3);font-size:12px;">You</span>'}
     </td>
   </tr>`).join('') : `<tr><td colspan="6" class="nd">No staff found</td></tr>`;
 }
@@ -271,36 +324,76 @@ async function deleteStaff(id){
 
 /* ── BOOT ── */
 function bootApp(){
+  if(!CU)return;
   seedDB();
-  const ini=CU.name.split(' ').map(w=>w[0]).join('').slice(0,2).toUpperCase();
-  document.getElementById('sbav').textContent=ini;
-  document.getElementById('sbuname').textContent=CU.name;
-  document.getElementById('sbrole').textContent=CU.role;
-  const now=new Date(),h=now.getHours();
-  document.getElementById('wbg').textContent=(h<12?'Good morning':h<17?'Good afternoon':'Good evening')+', '+CU.name;
-  document.getElementById('wbd').textContent=now.toLocaleDateString('en-UG',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
-  document.getElementById('tbdate').textContent=now.toLocaleDateString('en-UG',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
-  buildNav();switchScr('sa');nav('dashboard');
+  var ini=CU.name.split(' ').map(function(w){return w[0]||'';}).join('').slice(0,2).toUpperCase();
+  var sbav=document.getElementById('sbav');if(sbav)sbav.textContent=ini;
+  var sbun=document.getElementById('sbuname');if(sbun)sbun.textContent=CU.name;
+  var sbrl=document.getElementById('sbrole');if(sbrl)sbrl.textContent=CU.role;
+  var now=new Date(),h=now.getHours();
+  var greeting=h<12?'Good morning':h<17?'Good afternoon':'Good evening';
+  var wbg=document.getElementById('wbg');if(wbg)wbg.textContent=greeting+', '+CU.name;
+  var wbd=document.getElementById('wbd');
+  if(wbd)wbd.textContent=now.toLocaleDateString('en-UG',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  var tbd=document.getElementById('tbdate');
+  if(tbd)tbd.textContent=now.toLocaleDateString('en-UG',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
+  if(window._backupPage)return;
+  nav('dashboard');
 }
 
 /* ── DASHBOARD ── */
 function renderDash(){
-  const ps=DB.get('patients'),es=DB.get('encounters'),as=DB.get('appointments'),inv=DB.get('inventory');
-  let filteredAppointments = as;
-  if(CU && CU.role!=='admin' && CU.role!=='reception'){
-    filteredAppointments = filteredAppointments.filter(a=>a.st!=='Pending');
+  var ps=DB.get('patients'),es=DB.get('encounters'),as=DB.get('appointments'),inv=DB.get('inventory');
+  var isReceptionOrAdmin = CU && (CU.role==='admin' || CU.role==='reception');
+  var filteredAppointments = as.filter(function(a){return isReceptionOrAdmin||a.st!=='Pending';});
+  var t=td(),ta=filteredAppointments.filter(function(a){return a.date===t;}),
+      ae=es.filter(function(e){return e.st==='Active';}),
+      ls=inv.filter(function(i){return i.qty<=i.ro;});
+  var pendingCount = isReceptionOrAdmin ? as.filter(function(a){return a.st==='Pending';}).length : 0;
+
+  var dashAlert=document.getElementById('dash-pending-alert');
+  if(dashAlert && isReceptionOrAdmin){
+    dashAlert.style.display=pendingCount>0?'flex':'none';
+    var cntEl=document.getElementById('dash-pending-count');
+    if(cntEl&&pendingCount>0)cntEl.textContent=pendingCount+' appointment'+(pendingCount!==1?'s':'')+' awaiting your approval';
   }
-  const t=td(),ta=filteredAppointments.filter(a=>a.date===t),ae=es.filter(e=>e.st==='Active'),ls=inv.filter(i=>i.qty<=i.ro);
-  document.getElementById('dstats').innerHTML=[
-    {n:ps.length,l:'Total Patients',bg:'#eaf6fb',ic:'#1a6b87',ico:`<svg viewBox="0 0 22 22" fill="none" stroke="#1a6b87" stroke-width="1.5"><circle cx="11" cy="7" r="4"/><path d="M3 20c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke-linecap="round"/></svg>`},
-    {n:ta.length,l:"Today's Appointments",bg:'#e6f5ef',ic:'#1d8a5e',ico:`<svg viewBox="0 0 22 22" fill="none" stroke="#1d8a5e" stroke-width="1.5"><rect x="2" y="3" width="18" height="16" rx="2.5"/><path d="M7 1v4M15 1v4M2 9h18" stroke-linecap="round"/></svg>`},
-    {n:ae.length,l:'Active Encounters',bg:'#fdf3e6',ic:'#c97c2e',ico:`<svg viewBox="0 0 22 22" fill="none" stroke="#c97c2e" stroke-width="1.5"><rect x="3" y="2" width="16" height="18" rx="2"/><path d="M7 8h8M7 12h5" stroke-linecap="round"/></svg>`},
-    {n:ls.length,l:'Low Stock Items',bg:'#fceeed',ic:'#b5322a',ico:`<svg viewBox="0 0 22 22" fill="none" stroke="#b5322a" stroke-width="1.5"><path d="M11 2l9 16H2L11 2z"/><path d="M11 9v4M11 16v.5" stroke-linecap="round"/></svg>`},
-  ].map(s=>`<div class="stat"><div class="stico" style="background:${s.bg}">${s.ico}</div><div><div class="stnum" style="color:${s.ic}">${s.n}</div><div class="stlbl">${s.l}</div></div></div>`).join('');
-  document.getElementById('dappts').innerHTML=(ta.length?ta:filteredAppointments.slice(0,4)).map(a=>`<tr><td>${a.time}</td><td><strong>${a.pn}</strong></td><td><span class="b bb">${a.ty}</span></td><td><span class="b ${a.st==='Completed'?'bg':a.st==='Scheduled'?'bo':'ba'}">${a.st}</span></td></tr>`).join('')||`<tr><td colspan="4" class="nd">No appointments today</td></tr>`;
-  document.getElementById('dstock').innerHTML=ls.slice(0,5).map(i=>`<tr><td>${i.nm}</td><td><span class="b ${i.qty===0?'br':'bo'}">${i.qty}</span></td><td>${i.ro}</td></tr>`).join('')||`<tr><td colspan="3" class="nd" style="color:var(--ok)">✓ All in stock</td></tr>`;
-  document.getElementById('dpats').innerHTML=ps.slice(0,5).map(p=>`<tr><td><strong style="color:var(--t7)">${p.opd}</strong></td><td>${p.fn} ${p.ln}</td><td>${agD(p.age)}</td><td><span class="b ${p.ins&&p.ins!=='None'?'bg':'ba'}">${p.ins||'None'}</span></td></tr>`).join('');
-  document.getElementById('dencs').innerHTML=es.slice(0,5).map(e=>`<tr><td><strong>${e.pn}</strong></td><td><span class="b bt">${e.ty}</span></td><td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.dx}</td><td><span class="b ${e.st==='Active'?'bo':e.st==='Completed'?'bg':'ba'}">${e.st}</span></td></tr>`).join('');
+
+  var statsEl=document.getElementById('dstats');
+  if(statsEl)statsEl.innerHTML=[
+    {n:ps.length,l:'Total Patients',bg:'#eaf6fb',ic:'#1a6b87',ico:'<svg viewBox="0 0 22 22" fill="none" stroke="#1a6b87" stroke-width="1.5"><circle cx="11" cy="7" r="4"/><path d="M3 20c0-4.4 3.6-8 8-8s8 3.6 8 8" stroke-linecap="round"/></svg>'},
+    {n:ta.length,l:"Today's Appointments",bg:'#e6f5ef',ic:'#1d8a5e',ico:'<svg viewBox="0 0 22 22" fill="none" stroke="#1d8a5e" stroke-width="1.5"><rect x="2" y="3" width="18" height="16" rx="2.5"/><path d="M7 1v4M15 1v4M2 9h18" stroke-linecap="round"/></svg>'},
+    {n:ae.length,l:'Active Encounters',bg:'#fdf3e6',ic:'#c97c2e',ico:'<svg viewBox="0 0 22 22" fill="none" stroke="#c97c2e" stroke-width="1.5"><rect x="3" y="2" width="16" height="18" rx="2"/><path d="M7 8h8M7 12h5" stroke-linecap="round"/></svg>'},
+    (isReceptionOrAdmin&&pendingCount>0)
+      ? {n:pendingCount,l:'Pending Approval',bg:'#fff3cd',ic:'#856404',ico:'<svg viewBox="0 0 22 22" fill="none" stroke="#856404" stroke-width="1.5"><circle cx="11" cy="11" r="9"/><path d="M11 7v5l3 3" stroke-linecap="round"/></svg>',click:true}
+      : {n:ls.length,l:'Low Stock Items',bg:'#fceeed',ic:'#b5322a',ico:'<svg viewBox="0 0 22 22" fill="none" stroke="#b5322a" stroke-width="1.5"><path d="M11 2l9 16H2L11 2z"/><path d="M11 9v4M11 16v.5" stroke-linecap="round"/></svg>'},
+  ].map(function(s){
+    return '<div class="stat"'+(s.click?' onclick="nav(\'appointments\');setAF(\'Pending\')" style="cursor:pointer"':'')+'>'+
+      '<div class="stico" style="background:'+s.bg+'">'+s.ico+'</div>'+
+      '<div><div class="stnum" style="color:'+s.ic+'">'+s.n+'</div><div class="stlbl">'+s.l+'</div></div></div>';
+  }).join('');
+
+  var dappts=document.getElementById('dappts');
+  if(dappts)dappts.innerHTML=(ta.length?ta:filteredAppointments.slice(0,4)).map(function(a){
+    var badge=a.st==='Completed'?'bg':a.st==='Scheduled'?'bo':'ba';
+    var extra=a.st==='Pending'?' style="background:#fff3cd;color:#856404;border:1px solid #ffc107"':'';
+    var label=a.st==='Pending'?'⏳ Pending':a.st;
+    return '<tr><td>'+a.time+'</td><td><strong>'+a.pn+'</strong></td><td><span class="b bb">'+a.ty+'</span></td><td><span class="b '+badge+'"'+extra+'>'+label+'</span></td></tr>';
+  }).join('')||'<tr><td colspan="4" class="nd">No appointments today</td></tr>';
+
+  var dstock=document.getElementById('dstock');
+  if(dstock)dstock.innerHTML=ls.slice(0,5).map(function(i){
+    return '<tr><td>'+i.nm+'</td><td><span class="b '+(i.qty===0?'br':'bo')+'">'+i.qty+'</span></td><td>'+i.ro+'</td></tr>';
+  }).join()||'<tr><td colspan="3" class="nd" style="color:var(--ok)">✓ All in stock</td></tr>';
+
+  var dpats=document.getElementById('dpats');
+  if(dpats)dpats.innerHTML=ps.slice(0,5).map(function(p){
+    return '<tr><td><strong style="color:var(--t7)">'+p.opd+'</strong></td><td>'+p.fn+' '+p.ln+'</td><td>'+agD(p.age)+'</td><td><span class="b '+(p.ins&&p.ins!=='None'?'bg':'ba')+'">'+(p.ins||'None')+'</span></td></tr>';
+  }).join('');
+
+  var dencs=document.getElementById('dencs');
+  if(dencs)dencs.innerHTML=es.slice(0,5).map(function(e){
+    return '<tr><td><strong>'+e.pn+'</strong></td><td><span class="b bt">'+e.ty+'</span></td><td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+e.dx+'</td><td><span class="b '+(e.st==='Active'?'bo':e.st==='Completed'?'bg':'ba')+'">'+e.st+'</span></td></tr>';
+  }).join('');
 }
 
 /* ── PATIENTS ── */
@@ -310,32 +403,23 @@ function patOpts(){return'<option value="">— Select patient —</option>'+pats
 function nextOPD(){const ns=pats.map(p=>parseInt(p.opd.replace('HAK-',''))||0);return'HAK-'+String((ns.length?Math.max(...ns):0)+1).padStart(3,'0');}
 
 function renderPats(){
-  loadPats();const q=V('psrch').toLowerCase();
-  const list=pats.filter(p=>`${p.fn} ${p.ln} ${p.opd} ${p.ph||''}`.toLowerCase().includes(q));
-  
-  // Hide Register Patient button unless admin or reception
-  const registerButtons = document.querySelectorAll('button[onclick="openPat()"]');
-  registerButtons.forEach(btn => {
-    if(CU.role === 'admin' || CU.role === 'reception'){
-      btn.style.display = '';
-    } else {
-      btn.style.display = 'none';
-    }
-  });
-  
-  document.getElementById('ptbody').innerHTML=list.length?list.map(p=>`<tr>
-    <td><strong style="color:var(--t7)">${p.opd}</strong></td>
-    <td><a href="#" onclick="viewPat('${p.id}');return false" style="color:var(--t6);font-weight:500;text-decoration:none">${p.fn} ${p.ln}</a></td>
-    <td><strong style="color:var(--t7)">${agD(p.age)}</strong></td>
-    <td>${p.sex||'—'}</td><td>${p.bl||'—'}</td><td>${p.ph||'—'}</td><td>${p.ad||'—'}</td>
-    <td><span class="b ${p.ins&&p.ins!=='None'?'bg':'ba'}">${p.ins||'None'}</span></td>
-    <td style="font-size:11.5px">${fd(p.created)}</td>
-    <td style="white-space:nowrap">
-      <button class="btn btng xs" onclick="viewPat('${p.id}')">View</button>
-      <button class="btn btno xs" onclick="editPat&&editPat('${p.id}')" style="margin-left:3px">✏️</button>
-      <button class="btn btnd xs" onclick="delRec('patients','${p.id}',renderPats)" title="Delete patient" style="margin-left:3px">🗑</button>
-    </td>
-  </tr>`).join(''):`<tr><td colspan="10" class="nd">No patients found</td></tr>`;
+  loadPats();
+  var q=V('psrch').toLowerCase();
+  var list=pats.filter(function(p){return (p.fn+' '+p.ln+' '+p.opd+' '+(p.ph||'')).toLowerCase().indexOf(q)>-1;});
+  var ptbody=document.getElementById('ptbody');
+  if(!ptbody)return;
+  ptbody.innerHTML=list.length?list.map(function(p){return '<tr>'+
+    '<td><strong style="color:var(--t7)">'+p.opd+'</strong></td>'+
+    '<td><a href="#" onclick="viewPat(\''+p.id+'\');return false" style="color:var(--t6);font-weight:500;text-decoration:none">'+p.fn+' '+p.ln+'</a></td>'+
+    '<td><strong style="color:var(--t7)">'+agD(p.age)+'</strong></td>'+
+    '<td>'+(p.sex||'—')+'</td><td>'+(p.bl||'—')+'</td><td>'+(p.ph||'—')+'</td><td>'+(p.ad||'—')+'</td>'+
+    '<td><span class="b '+(p.ins&&p.ins!=='None'?'bg':'ba')+'">'+(p.ins||'None')+'</span></td>'+
+    '<td style="font-size:11.5px">'+fd(p.created)+'</td>'+
+    '<td style="white-space:nowrap">'+
+      '<button class="btn btng xs" onclick="viewPat(\''+p.id+'\')">View</button>'+
+      '<button class="btn btno xs" onclick="editPat&&editPat(\''+p.id+'\')" style="margin-left:3px">✏️</button>'+
+      '<button class="btn btnd xs" onclick="delRec(\'patients\',\''+p.id+'\',renderPats)" title="Delete" style="margin-left:3px">🗑</button>'+
+    '</td></tr>';}).join(''):'<tr><td colspan="10" class="nd">No patients found</td></tr>';
 }
 
 function openPat(){
@@ -458,117 +542,179 @@ function printAllHistory(){
 
 /* ── APPOINTMENTS ── */
 let aFil='all';
-function setAF(f){aFil=f;document.querySelectorAll('[id^="at-"]').forEach(b=>{b.className='tab'+(b.id==='at-'+f?' on':'')});renderAppts();}
+let _editApptId=null; // declared here so saveAppt can reference it
+function setAF(f){
+  aFil=f;
+  // Update all tab buttons
+  document.querySelectorAll('[id^="at-"]').forEach(b=>{
+    if(b.id==='at-Pending'){return;} // handled separately
+    b.className='tab'+(b.id==='at-'+f?' on':'');
+  });
+  const pt=document.getElementById('at-Pending');
+  if(pt) pt.classList.toggle('on', f==='Pending');
+  renderAppts();
+}
 function renderAppts(){
-  let l=DB.get('appointments');const df=V('adf');
-  // Filter out pending appointments for non-admin/reception
-  if(CU && CU.role!=='admin' && CU.role!=='reception'){
-    l=l.filter(a=>a.st!=='Pending');
-  }
-  if(df)l=l.filter(a=>a.date===df);if(aFil!=='all')l=l.filter(a=>a.st===aFil);
-  // Sort pending first
+  const isReceptionOrAdmin = CU && (CU.role==='admin' || CU.role==='reception');
+  const canApprovePending  = isReceptionOrAdmin;
+  // Doctors & nurses can VIEW pending (read-only); pharmacy/billing/lab cannot
+  const canSeePending = CU && ['admin','reception','doctor','nurse'].indexOf(CU.role) > -1;
+  let l = DB.get('appointments');
+  const df = V('adf');
+  if(!canSeePending){ l = l.filter(a => a.st !== 'Pending'); }
+  if(df) l = l.filter(a => a.date === df);
+  if(aFil !== 'all') l = l.filter(a => a.st === aFil);
   l.sort((a,b)=>{
     if(a.st==='Pending' && b.st!=='Pending') return -1;
     if(b.st==='Pending' && a.st!=='Pending') return 1;
-    return 0;
+    return (b.date||'').localeCompare(a.date||'');
   });
-  document.getElementById('atbody').innerHTML=l.length?l.map(a=>`<tr>
-    <td>${fd(a.date)}</td><td>${a.time}</td><td><strong>${a.pn}</strong></td><td>${a.pr}</td>
-    <td><span class="b bt">${a.ty}</span></td>
-    <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.n||'—'}</td>
-    <td><span class="b ${a.st==='Completed'?'bg':a.st==='Scheduled'?'bo':a.st==='Pending'?'b':a.st==='Rejected'?'br':''}">${a.st}</span></td>
-    <td style="white-space:nowrap">
-      <button class="btn btno xs" onclick="editAppt&&editAppt('${a.id}')">✏️</button>
-      <button class="btn btnd xs" onclick="delRec('appointments','${a.id}',renderAppts)" title="Delete" style="margin-left:3px">🗑</button>
-      ${a.st==='Pending'?`<button class="btn btng xs" onclick="approveAppt('${a.id}')" style="margin-left:3px">✓ Approve</button><button class="btn btnd xs" onclick="rejectAppt('${a.id}')">✗ Reject</button>`:''}
-      ${a.st==='Scheduled'?`<button class="btn btng xs" onclick="mkAppt('${a.id}','Completed')" style="margin-left:3px">✓ Complete</button><button class="btn btnd xs" onclick="mkAppt('${a.id}','Cancelled')">✗ Cancel</button>`:''}
-    </td>
-  </tr>`).join(''):`<tr><td colspan="8" class="nd">No appointments</td></tr>`;
+  // Pending badge on tab
+  if(canSeePending){
+    const pendingCount = DB.get('appointments').filter(a=>a.st==='Pending').length;
+    const pendingTab = document.getElementById('at-Pending');
+    if(pendingTab){
+      pendingTab.innerHTML = pendingCount > 0
+        ? `Pending <span style="background:#e53e3e;color:white;border-radius:99px;padding:1px 7px;font-size:10px;margin-left:4px;font-weight:700">${pendingCount}</span>`
+        : 'Pending';
+    }
+  }
+  const atbody = document.getElementById('atbody');
+  if(!atbody) return;
+  atbody.innerHTML = l.length ? l.map(a=>`
+    <tr style="${a.st==='Pending'?'background:rgba(255,193,7,.07);':''}">
+      <td>${fd(a.date)}</td>
+      <td>${a.time||'—'}</td>
+      <td><strong>${a.pn}</strong></td>
+      <td>${a.pr||'—'}</td>
+      <td><span class="b bt">${a.ty||'—'}</span></td>
+      <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.n||'—'}</td>
+      <td>
+        <span class="b ${a.st==='Completed'?'bg':a.st==='Scheduled'?'bo':a.st==='Rejected'?'br':'ba'}"
+          ${a.st==='Pending'?'style="background:#fff3cd;color:#856404;border:1px solid #ffc107"':''}>
+          ${a.st==='Pending'?'⏳ Pending':a.st}
+        </span>
+      </td>
+      <td style="white-space:nowrap">
+        <button class="btn btno xs" onclick="editAppt('${a.id}')">✏️</button>
+        <button class="btn btnd xs" onclick="delRec('appointments','${a.id}',renderAppts)" title="Delete" style="margin-left:3px">🗑</button>
+        ${a.st==='Pending' && canApprovePending
+          ? `<button class="btn btng xs" onclick="approveAppt('${a.id}')" style="margin-left:3px;background:#1d8a5e;color:white">✓ Approve</button>
+             <button class="btn btnd xs" onclick="rejectAppt('${a.id}')" style="margin-left:3px">✗ Reject</button>`
+          : ''}
+        ${a.st==='Scheduled'
+          ? `<button class="btn btng xs" onclick="mkAppt('${a.id}','Completed')" style="margin-left:3px">✓ Done</button>
+             <button class="btn btnd xs" onclick="mkAppt('${a.id}','Cancelled')" style="margin-left:3px">✗ Cancel</button>`
+          : ''}
+      </td>
+    </tr>`).join('') : `<tr><td colspan="8" class="nd">No appointments</td></tr>`;
 }
-function openAppt(){loadPats();S('af-d',td());document.getElementById('af-p').innerHTML=patOpts();openOv('ov-appt');}
+function openAppt(){
+  loadPats();
+  S('af-d',td());
+  _editApptId = null;
+  document.getElementById('appt-mtit').textContent = 'Book Appointment';
+  if(document.getElementById('appt-editbadge')) document.getElementById('appt-editbadge').style.display='none';
+  document.getElementById('af-p').innerHTML=patOpts();
+  openOv('ov-appt');
+}
 function saveAppt(){
   const pid=V('af-p');if(!pid){toast('Select a patient','error');return;}
   loadPats();const p=pats.find(x=>x.id===pid);
+  if(!p){toast('Patient not found','error');return;}
+  // Staff-created appointments are immediately Scheduled (no approval needed)
   const a={id:DB.id(),pid,pn:`${p.fn} ${p.ln}`,date:V('af-d'),time:V('af-t'),pr:V('af-pr'),ty:V('af-ty'),n:V('af-n'),st:'Scheduled'};
+  if(_editApptId){
+    const ar=DB.get('appointments');const idx=ar.findIndex(x=>x.id===_editApptId);
+    if(idx>-1){ar[idx]={...ar[idx],pid,pn:`${p.fn} ${p.ln}`,date:V('af-d'),time:V('af-t'),pr:V('af-pr'),ty:V('af-ty'),n:V('af-n')};}
+    DB.set('appointments',ar);_editApptId=null;
+    document.getElementById('appt-mtit').textContent='Book Appointment';
+    closeOv('ov-appt');renderAppts();toast('Appointment updated','success');
+    return;
+  }
   const ar=DB.get('appointments');ar.unshift(a);DB.set('appointments',ar);closeOv('ov-appt');S('af-n','');renderAppts();toast('Appointment booked','success');
 }
 async function approveAppt(id){
+  // Optimistic update — instantly show Scheduled
+  const ar = DB.get('appointments').map(a => a.id===id ? {...a, st:'Scheduled'} : a);
+  LOCAL_DB['appointments'] = ar;
+  renderAppts();
+  renderDash();
   try {
     const formData = new FormData();
     formData.append('appt_id', id);
-    
-    const resp = await fetch('api.php?action=approve_appointment', {
-      method: 'POST',
-      body: formData
-    });
-    
+    const resp = await fetch('api.php?action=approve_appointment', { method:'POST', body:formData });
     const result = await resp.json();
-    
     if (result.success) {
-      // Refresh DB from server
+      // Full refresh to sync any server-side changes
       const getResp = await fetch('api.php?action=get');
-      const newServerDB = await getResp.json();
+      const srv = await getResp.json();
       for (const [appKey, tableKey] of Object.entries(KEY_MAP)) {
-        LOCAL_DB[appKey] = newServerDB[tableKey] || [];
+        LOCAL_DB[appKey] = srv[tableKey] || [];
       }
-      
       renderAppts();
-      toast('Appointment approved! Email sent to patient.', 'success');
+      renderDash();
+      toast('Appointment approved ✓', 'success');
     } else {
+      // Rollback
+      LOCAL_DB['appointments'] = DB.get('appointments').map(a => a.id===id ? {...a, st:'Pending'} : a);
+      renderAppts();
       toast(result.error || 'Failed to approve appointment', 'error');
     }
   } catch (e) {
     console.error(e);
-    toast('Error approving appointment', 'error');
+    toast('Network error — appointment updated locally', 'warn');
   }
 }
 
 async function rejectAppt(id){
-  let notes = prompt('Enter reason for rejection (optional):', '');
+  const notes = prompt('Reason for rejection (optional):', '') ?? '';
+  // Optimistic update
+  const ar = DB.get('appointments').map(a => a.id===id ? {...a, st:'Rejected'} : a);
+  LOCAL_DB['appointments'] = ar;
+  renderAppts();
+  renderDash();
   try {
     const formData = new FormData();
     formData.append('appt_id', id);
     if (notes) formData.append('notes', notes);
-    
-    const resp = await fetch('api.php?action=reject_appointment', {
-      method: 'POST',
-      body: formData
-    });
-    
+    const resp = await fetch('api.php?action=reject_appointment', { method:'POST', body:formData });
     const result = await resp.json();
-    
     if (result.success) {
-      // Refresh DB from server
       const getResp = await fetch('api.php?action=get');
-      const newServerDB = await getResp.json();
+      const srv = await getResp.json();
       for (const [appKey, tableKey] of Object.entries(KEY_MAP)) {
-        LOCAL_DB[appKey] = newServerDB[tableKey] || [];
+        LOCAL_DB[appKey] = srv[tableKey] || [];
       }
-      
       renderAppts();
-      toast('Appointment rejected! Email sent to patient.', 'success');
+      renderDash();
+      toast('Appointment rejected', 'warn');
     } else {
+      LOCAL_DB['appointments'] = DB.get('appointments').map(a => a.id===id ? {...a, st:'Pending'} : a);
+      renderAppts();
       toast(result.error || 'Failed to reject appointment', 'error');
     }
   } catch (e) {
     console.error(e);
-    toast('Error rejecting appointment', 'error');
+    toast('Network error — appointment updated locally', 'warn');
   }
 }
-
 function mkAppt(id,st){
   const ar=DB.get('appointments').map(a=>a.id===id?{...a,st}:a);
   DB.set('appointments',ar);
   renderAppts();
-  toast('Updated');
+  renderDash();
+  toast(st==='Completed'?'Marked complete':'Updated','success');
 }
 
 /* ── ENCOUNTERS ── */
 let eFil='all';
 function setEF(f){eFil=f;document.querySelectorAll('[id^="ef-"]').forEach(b=>{if(b.classList.contains('tab'))b.className='tab'+(b.id==='ef-'+f?' on':'')});renderEncs();}
 function renderEncs(){
+  const etbody=document.getElementById('etbody');
+  if(!etbody)return;
   let l=DB.get('encounters');if(eFil!=='all')l=l.filter(e=>e.st===eFil);
-  document.getElementById('etbody').innerHTML=l.length?l.map(e=>`<tr>
+  etbody.innerHTML=l.length?l.map(e=>`<tr>
     <td>${fd(e.date)}</td>
     <td><a href="#" onclick="viewEnc('${e.id}');return false" style="color:var(--t6);font-weight:500;text-decoration:none">${e.pn}</a></td>
     <td><span class="b bt">${e.ty}</span></td><td>${e.pr}</td>
@@ -628,8 +774,13 @@ function printEncById(id){
 const US_SCANS=['Obstetric / Pregnancy','Abdominal','Pelvic','Renal / KUB','Thyroid','Scrotal','Breast','Cardiac (Echo)','Trans-vaginal'];
 function setUT(t){document.getElementById('usrp').style.display=t==='r'?'':'none';document.getElementById('uspp').style.display=t==='p'?'':'none';document.getElementById('ut-r').className='tab'+(t==='r'?' on':'');document.getElementById('ut-p').className='tab'+(t==='p'?' on':'');}
 function renderUSReqs(){
-  const l=DB.get('us_req');document.getElementById('usrtb').innerHTML=l.length?l.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.scans?.join(', ')}</td><td>${r.cl}</td><td><span class="b ${r.pr==='Urgent'?'bo':'ba'}">${r.pr}</span></td><td><span class="b ${r.st==='Pending'?'bo':'bg'}">${r.st}</span></td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pUSReq('${r.id}')">🖨</button><button class="btn btno xs" onclick="editUSReq&&editUSReq('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('us_req','${r.id}',renderUSReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="8" class="nd">No requests</td></tr>`;
-  const p=DB.get('us_rep');document.getElementById('usptb').innerHTML=p.length?p.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td>${r.ty}</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.imp}</td><td>${r.by||'—'}</td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pUSRep('${r.id}')">🖨</button><button class="btn btno xs" onclick="editUSRep('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('us_rep','${r.id}',renderUSReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="7" class="nd">No reports</td></tr>`;
+  const usrtb=document.getElementById('usrtb');
+  const usptb=document.getElementById('usptb');
+  if(!usrtb&&!usptb)return;
+  const l=DB.get('us_req');
+  if(usrtb)usrtb.innerHTML=l.length?l.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.scans?.join(', ')}</td><td>${r.cl}</td><td><span class="b ${r.pr==='Urgent'?'bo':'ba'}">${r.pr}</span></td><td><span class="b ${r.st==='Pending'?'bo':'bg'}">${r.st}</span></td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pUSReq('${r.id}')">🖨</button><button class="btn btno xs" onclick="editUSReq&&editUSReq('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('us_req','${r.id}',renderUSReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="8" class="nd">No requests</td></tr>`;
+  const p=DB.get('us_rep');
+  if(usptb)usptb.innerHTML=p.length?p.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td>${r.ty}</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.imp}</td><td>${r.by||'—'}</td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pUSRep('${r.id}')">🖨</button><button class="btn btno xs" onclick="editUSRep('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('us_rep','${r.id}',renderUSReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="7" class="nd">No reports</td></tr>`;
 }
 function openUSReq(){
   loadPats();S('usq-d',td());S('usq-ind','');S('usq-oth','');document.getElementById('usq-p').innerHTML=patOpts();
@@ -661,8 +812,13 @@ function pUSRep(id){const r=DB.get('us_rep').find(x=>x.id===id);if(!r)return;doP
 /* ── LABORATORY ── */
 function setLT(t){document.getElementById('lrp').style.display=t==='r'?'':'none';document.getElementById('lpp').style.display=t==='p'?'':'none';document.getElementById('lt-r').className='tab'+(t==='r'?' on':'');document.getElementById('lt-p').className='tab'+(t==='p'?' on':'');}
 function renderLabReqs(){
-  const l=DB.get('lab_req');document.getElementById('lrtb').innerHTML=l.length?l.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.tests?.slice(0,3).join(', ')+(r.tests?.length>3?'…':'')}</td><td>${r.cl}</td><td><span class="b ${r.pr==='STAT'?'br':r.pr==='Urgent'?'bo':'ba'}">${r.pr}</span></td><td><span class="b ${r.st==='Pending'?'bo':'bg'}">${r.st}</span></td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pLabReq('${r.id}')">🖨</button><button class="btn btnd xs" onclick="delRec('lab_req','${r.id}',renderLabReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="8" class="nd">No lab requests</td></tr>`;
-  const p=DB.get('lab_rep');document.getElementById('lptb').innerHTML=p.length?p.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.rows?.slice(0,3).map(x=>x.t).join(', ')}</td><td>${r.by||'—'}</td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pLabRep('${r.id}')">🖨</button><button class="btn btno xs" onclick="editLabRep('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('lab_rep','${r.id}',renderLabReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="6" class="nd">No results</td></tr>`;
+  const lrtb=document.getElementById('lrtb');
+  const lptb=document.getElementById('lptb');
+  if(!lrtb&&!lptb)return;
+  const l=DB.get('lab_req');
+  if(lrtb)lrtb.innerHTML=l.length?l.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.tests?.slice(0,3).join(', ')+(r.tests?.length>3?'…':'')}</td><td>${r.cl}</td><td><span class="b ${r.pr==='STAT'?'br':r.pr==='Urgent'?'bo':'ba'}">${r.pr}</span></td><td><span class="b ${r.st==='Pending'?'bo':'bg'}">${r.st}</span></td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pLabReq('${r.id}')">🖨</button><button class="btn btnd xs" onclick="delRec('lab_req','${r.id}',renderLabReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="8" class="nd">No lab requests</td></tr>`;
+  const p=DB.get('lab_rep');
+  if(lptb)lptb.innerHTML=p.length?p.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.rows?.slice(0,3).map(x=>x.t).join(', ')}</td><td>${r.by||'—'}</td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pLabRep('${r.id}')">🖨</button><button class="btn btno xs" onclick="editLabRep('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('lab_rep','${r.id}',renderLabReqs)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="6" class="nd">No results</td></tr>`;
 }
 function openLabReq(){loadPats();S('lq-d',td());S('lq-ind','');S('lq-oth','');document.getElementById('lq-p').innerHTML=patOpts();document.querySelectorAll('.lbt').forEach(c=>c.checked=false);openOv('ov-labreq');}
 function saveLabReq(pr){
@@ -795,15 +951,18 @@ function pLabRep(id){_pLabRepFull(id);}
 /* ── PHARMACY ── */
 function setRT(t){document.getElementById('rxp').style.display=t==='r'?'':'none';document.getElementById('dip').style.display=t==='d'?'':'none';document.getElementById('rxt-r').className='tab'+(t==='r'?' on':'');document.getElementById('rxt-d').className='tab'+(t==='d'?' on':'');}
 function renderRx(){
-  const l=DB.get('rx');document.getElementById('rxtb').innerHTML=l.length?l.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.meds?.slice(0,2).map(m=>m.dr).join(', ')+(r.meds?.length>2?'…':'')}</td><td>${r.cl}</td><td>${r.dx||'—'}</td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pRx('${r.id}')">🖨</button><button class="btn btno xs" onclick="editRx('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('rx','${r.id}',renderRx)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="7" class="nd">No prescriptions</td></tr>`;
+  const rxtb=document.getElementById('rxtb');
+  const ditb=document.getElementById('ditb');
+  const l=DB.get('rx');
+  if(rxtb)rxtb.innerHTML=l.length?l.map(r=>`<tr><td><strong style="color:var(--t7)">${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.pn}</td><td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.meds?.slice(0,2).map(m=>m.dr).join(', ')+(r.meds?.length>2?'…':'')}</td><td>${r.cl}</td><td>${r.dx||'—'}</td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pRx('${r.id}')">🖨</button><button class="btn btno xs" onclick="editRx('${r.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('rx','${r.id}',renderRx)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="7" class="nd">No prescriptions</td></tr>`;
   const d=DB.get('dis');
-  document.getElementById('ditb').innerHTML=d.length?d.map(x=>`<tr>
+  if(ditb)ditb.innerHTML=d.length?d.map(x=>`<tr>
     <td>${fd(x.date)}</td><td>${x.pn}</td><td>${x.item}</td>
     <td><strong>${x.qty.toLocaleString()}</strong></td>
     <td>${fm(x.pr)}</td>
     <td><strong>${fm(x.tot)}</strong></td>
     <td>${x.by||'—'}</td>
-    <td><button class="btn btnd xs" onclick="delRec('dis','${x.id}',renderRx)" title="Delete" >🗑</button></td>
+    <td><button class="btn btnd xs" onclick="delRec('dis','${x.id}',renderRx)" title="Delete">🗑</button></td>
   </tr>`).join(''):`<tr><td colspan="8" class="nd">No dispensing records</td></tr>`;
   // Compute and display totals
   if(d.length>0){
@@ -1235,17 +1394,16 @@ function disBrowseAll(){}
 /* ── INVENTORY ── */
 let _eivid=null;
 function renderInv(){
+  const invtb=document.getElementById('invtb');
+  if(!invtb)return;
   const q=V('invsrch').toLowerCase();
   const all=DB.get('inventory');
   const l=q?all.filter(i=>(i.nm+' '+(i.cat||'')).toLowerCase().includes(q)):all;
-  // Update count label
   const countEl=document.getElementById('inv-count');
   if(countEl)countEl.textContent=l.length+' item'+(l.length!==1?'s':'')+(q?' matching':'');
-  // Summary stats
   const out=all.filter(i=>i.qty===0).length;
   const low=all.filter(i=>i.qty>0&&i.qty<=i.ro).length;
   const ok=all.filter(i=>i.qty>i.ro).length;
-  const totalVal=all.reduce((s,i)=>s+(i.qty*(i.sp||i.cp||0)),0);
   const statsEl=document.getElementById('inv-stats');
   if(statsEl)statsEl.innerHTML=[
     {n:all.length,l:'Total Items',bg:'#eaf6fb',ic:'#1a6b87'},
@@ -1253,17 +1411,26 @@ function renderInv(){
     {n:low,l:'Low Stock',bg:'#fdf3e6',ic:'#c97c2e'},
     {n:out,l:'Out of Stock',bg:'#fceeed',ic:'#b5322a'},
   ].map(s=>`<div style="background:${s.bg};border-radius:12px;padding:14px 16px;display:flex;justify-content:space-between;align-items:center"><div style="font-size:11px;color:${s.ic};text-transform:uppercase;letter-spacing:.06em;font-weight:600">${s.l}</div><div style="font-family:var(--fs);font-size:24px;font-weight:700;color:${s.ic}">${s.n}</div></div>`).join('');
-  // Render all rows
-  document.getElementById('invtb').innerHTML=l.length?l.map((i,idx)=>{
+  invtb.innerHTML=l.length?l.map((i,idx)=>{
     const lw=i.qty>0&&i.qty<=i.ro,out=i.qty===0;
     const expSoon=i.ex&&(new Date(i.ex)-new Date())<90*86400000&&new Date(i.ex)>new Date();
     const expired=i.ex&&new Date(i.ex)<new Date();
+    // Stock level bar: pct relative to reorder×3 as "full"
+    const maxVis=Math.max((i.ro||10)*3,i.qty,1);
+    const pct=Math.min(100,Math.round((i.qty/maxVis)*100));
+    const barColor=out?'var(--er)':lw?'var(--wn)':'var(--ok)';
+    const stockBar=`<div style="display:flex;align-items:center;gap:6px">
+      <span class="b ${out?'br':lw?'bo':'bg'}" style="font-size:12px;min-width:32px;text-align:center">${i.qty.toLocaleString()}</span>
+      <div style="flex:1;min-width:50px;background:var(--iv2);border-radius:99px;height:6px;overflow:hidden" title="${i.qty} / reorder at ${i.ro}">
+        <div style="background:${barColor};height:100%;width:${pct}%;border-radius:99px;transition:width .3s"></div>
+      </div>
+    </div>`;
     return`<tr class="${out?'rout':lw?'rlow':''}">
       <td style="color:var(--tx3);font-size:12px">${idx+1}</td>
       <td><strong>${i.nm}</strong></td>
       <td><span class="b bt">${i.cat}</span></td>
       <td style="font-size:12px;color:var(--tx3)">${i.un}</td>
-      <td><span class="b ${out?'br':lw?'bo':'bg'}" style="font-size:12px">${i.qty.toLocaleString()}</span></td>
+      <td style="min-width:110px">${stockBar}</td>
       <td style="font-size:12px">${i.ro}</td>
       <td style="font-size:12px">${fm(i.cp)}</td>
       <td style="font-size:12px">${i.sp>0?fm(i.sp):'—'}</td>
@@ -1298,13 +1465,64 @@ function renderBillStats(){
   const totPaid=all.reduce((s,b)=>s+Number(b.paid||0),0);
   const totBal=all.reduce((s,b)=>s+Number(b.bal||0),0);
   const unpaid=all.filter(b=>b.st==='Unpaid').length;
+  const partial=all.filter(b=>b.st==='Partial').length;
   const el=document.getElementById('bill-stats');
   if(el)el.innerHTML=[
-    {n:all.length,l:'Total Invoices',bg:'#eaf6fb',ic:'#1a6b87',sub:''},
+    {n:all.length,l:'Total Invoices',bg:'#eaf6fb',ic:'#1a6b87',sub:'All time'},
     {n:'UGX '+totBilled.toLocaleString(),l:'Total Billed',bg:'var(--t1)',ic:'#0f3d4f',sub:'',big:true},
     {n:'UGX '+totPaid.toLocaleString(),l:'Total Collected',bg:'#e6f5ef',ic:'#1d8a5e',sub:'',big:true},
-    {n:'UGX '+totBal.toLocaleString(),l:'Outstanding Balance',bg:'#fceeed',ic:'#b5322a',sub:unpaid+' unpaid invoice'+(unpaid!==1?'s':''),big:true},
+    {n:'UGX '+totBal.toLocaleString(),l:'Outstanding Balance',bg:'#fceeed',ic:'#b5322a',sub:unpaid+' unpaid, '+partial+' partial',big:true},
   ].map(s=>`<div style="background:${s.bg};border-radius:12px;padding:14px 16px"><div style="font-size:10px;color:${s.ic};text-transform:uppercase;letter-spacing:.06em;font-weight:600;margin-bottom:4px">${s.l}</div><div style="font-family:var(--fs);font-size:${s.big?'17px':'24px'};font-weight:700;color:${s.ic}">${s.n}</div>${s.sub?`<div style="font-size:11px;color:var(--tx3);margin-top:2px">${s.sub}</div>`:''}</div>`).join('');
+  // Show/hide pending appointment alert for reception
+  const pendingCount = DB.get('appointments').filter(a=>a.st==='Pending').length;
+  const alertEl = document.getElementById('pending-appt-alert');
+  if(alertEl && (CU.role==='reception' || CU.role==='admin')){
+    if(pendingCount>0){
+      alertEl.style.display='flex';
+      const cntEl=document.getElementById('pending-alert-count');
+      if(cntEl)cntEl.textContent=pendingCount+' appointment'+(pendingCount!==1?'s':'')+' awaiting approval';
+    }else{
+      alertEl.style.display='none';
+    }
+  }
+}
+
+function printBillReport(){
+  const all=DB.get('billing');
+  const tot=all.reduce((s,b)=>s+Number(b.tot||0),0);
+  const paid=all.reduce((s,b)=>s+Number(b.paid||0),0);
+  const bal=all.reduce((s,b)=>s+Number(b.bal||0),0);
+  const paidCount=all.filter(b=>b.st==='Paid').length;
+  const unpaidCount=all.filter(b=>b.st==='Unpaid').length;
+  const partialCount=all.filter(b=>b.st==='Partial').length;
+  // Group by payment method
+  const byMethod={};
+  all.forEach(b=>{(b.payments||[]).forEach(p=>{if(!byMethod[p.m])byMethod[p.m]=0;byMethod[p.m]+=Number(p.a||0);});if(!(b.payments&&b.payments.length)&&Number(b.paid||0)>0){if(!byMethod[b.mt||'Cash'])byMethod[b.mt||'Cash']=0;byMethod[b.mt||'Cash']+=Number(b.paid||0);}});
+  doPrint(`<div style="max-width:720px;margin:0 auto;padding:28px;font-family:'Outfit',sans-serif">
+    ${hakHdr('BILLING REPORT','',td())}
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:18px">
+      <div style="background:#eaf6fb;border-radius:9px;padding:12px;text-align:center"><div style="font-size:9.5px;color:#1a6b87;text-transform:uppercase;margin-bottom:3px">Total Invoices</div><div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#1a6b87">${all.length}</div></div>
+      <div style="background:var(--t1);border-radius:9px;padding:12px;text-align:center"><div style="font-size:9.5px;color:#0f3d4f;text-transform:uppercase;margin-bottom:3px">Total Billed</div><div style="font-family:'Playfair Display',serif;font-size:16px;font-weight:700;color:#0f3d4f">${fm(tot)}</div></div>
+      <div style="background:#e6f5ef;border-radius:9px;padding:12px;text-align:center"><div style="font-size:9.5px;color:#1d8a5e;text-transform:uppercase;margin-bottom:3px">Collected</div><div style="font-family:'Playfair Display',serif;font-size:16px;font-weight:700;color:#1d8a5e">${fm(paid)}</div></div>
+      <div style="background:#fceeed;border-radius:9px;padding:12px;text-align:center"><div style="font-size:9.5px;color:#b5322a;text-transform:uppercase;margin-bottom:3px">Outstanding</div><div style="font-family:'Playfair Display',serif;font-size:16px;font-weight:700;color:#b5322a">${fm(bal)}</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px">
+      <div><div style="font-size:10px;font-weight:700;color:#1a6b87;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;border-bottom:1px solid #d4eff8;padding-bottom:4px">Invoice Status</div>
+        ${[['Paid',paidCount,'#1d8a5e'],['Partial',partialCount,'#c97c2e'],['Unpaid',unpaidCount,'#b5322a']].map(([lbl,cnt,c])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f0f8fc"><span>${lbl}</span><span style="font-weight:700;color:${c}">${cnt}</span></div>`).join('')}
+      </div>
+      ${Object.keys(byMethod).length?`<div><div style="font-size:10px;font-weight:700;color:#1a6b87;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;border-bottom:1px solid #d4eff8;padding-bottom:4px">Collections by Method</div>
+        ${Object.entries(byMethod).sort((a,b)=>b[1]-a[1]).map(([m,a])=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f0f8fc"><span>${m}</span><span style="font-weight:700;color:#1d8a5e">${fm(a)}</span></div>`).join('')}
+      </div>`:''}
+    </div>
+    <div style="font-size:10px;font-weight:700;color:#1a6b87;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px;border-bottom:1px solid #d4eff8;padding-bottom:4px">Invoice Details</div>
+    <table style="width:100%;border-collapse:collapse;font-size:11.5px">
+      <thead><tr style="background:#145369;color:white"><th style="padding:7px 9px;text-align:left">Ref</th><th style="padding:7px 9px;text-align:left">Date</th><th style="padding:7px 9px;text-align:left">Patient</th><th style="padding:7px 9px;text-align:right">Total</th><th style="padding:7px 9px;text-align:right">Paid</th><th style="padding:7px 9px;text-align:right">Balance</th><th style="padding:7px 9px;text-align:left">Status</th></tr></thead>
+      <tbody>${all.map((b,i)=>`<tr style="${i%2===0?'':'background:#f8fbfd'}"><td style="padding:6px 9px;font-weight:600;color:#1a6b87">${b.ref}</td><td style="padding:6px 9px">${fd(b.date)}</td><td style="padding:6px 9px">${b.pn}</td><td style="padding:6px 9px;text-align:right">${fm(b.tot)}</td><td style="padding:6px 9px;text-align:right;color:#1d8a5e">${fm(b.paid)}</td><td style="padding:6px 9px;text-align:right;color:${b.bal>0?'#b5322a':'#1d8a5e'}">${fm(b.bal)}</td><td style="padding:6px 9px"><span style="background:${b.st==='Paid'?'#e6f5ef':b.st==='Partial'?'#fdf3e6':'#fceeed'};color:${b.st==='Paid'?'#1d8a5e':b.st==='Partial'?'#c97c2e':'#b5322a'};border-radius:99px;padding:2px 8px;font-size:10px;font-weight:600">${b.st}</span></td></tr>`).join('')}
+      <tr style="border-top:2.5px solid #2089ab;background:#eaf6fb;font-weight:700"><td colspan="3" style="padding:8px 9px;text-align:right;font-size:12px">TOTALS</td><td style="padding:8px 9px;text-align:right;color:#145369">${fm(tot)}</td><td style="padding:8px 9px;text-align:right;color:#1d8a5e">${fm(paid)}</td><td style="padding:8px 9px;text-align:right;color:${bal>0?'#b5322a':'#1d8a5e'}">${fm(bal)}</td><td></td></tr>
+      </tbody>
+    </table>
+    ${hakFtr()}
+  </div>`);
 }
 
 /* ── QUICK INVOICE (inline on billing page) ── */
@@ -1426,6 +1644,7 @@ function renderBill(){
   </tr>`).join(''):`<tr><td colspan="10" class="nd">No invoices yet</td></tr>`;
   renderBillStats();
 }
+let _editBillId=null; // declared here so openBill/saveBill can reference it
 let bRids=[];
 /* ── BILLING: multi-payment JS ── */
 let payRids=[];
@@ -1646,8 +1865,10 @@ function pInvoice(id){
 
 /* ── DISCHARGE ── */
 function renderDC(){
+  const dctb=document.getElementById('dctb');
+  if(!dctb)return;
   const l=DB.get('discharge');
-  document.getElementById('dctb').innerHTML=l.length?l.map(d=>`<tr><td><strong style="color:var(--t7)">${d.ref}</strong></td><td>${fd(d.dd)}</td><td>${d.pn}</td><td>${fd(d.ad)}</td><td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.di}</td><td>${d.cl}</td><td><span class="b ${d.co==='Recovered'||d.co==='Improved'?'bg':d.co==='Referred'?'bo':'ba'}">${d.co}</span></td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pDC('${d.id}')">🖨</button><button class="btn btno xs" onclick="editDC('${d.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('discharge','${d.id}',renderDC)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="8" class="nd">No discharge summaries</td></tr>`;
+  dctb.innerHTML=l.length?l.map(d=>`<tr><td><strong style="color:var(--t7)">${d.ref}</strong></td><td>${fd(d.dd)}</td><td>${d.pn}</td><td>${fd(d.ad)}</td><td style="max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.di}</td><td>${d.cl}</td><td><span class="b ${d.co==='Recovered'||d.co==='Improved'?'bg':d.co==='Referred'?'bo':'ba'}">${d.co}</span></td><td style="white-space:nowrap"><button class="btn btng xs" onclick="pDC('${d.id}')">🖨</button><button class="btn btno xs" onclick="editDC('${d.id}')" style="margin-left:3px">✏️</button><button class="btn btnd xs" onclick="delRec('discharge','${d.id}',renderDC)" title="Delete" style="margin-left:3px">🗑</button></td></tr>`).join(''):`<tr><td colspan="8" class="nd">No discharge summaries</td></tr>`;
 }
 function openDC(){loadPats();S('dc-ad',td());S('dc-dd',td());['dc-wd','dc-cc','dc-ai','dc-di','dc-iv','dc-tx','dc-mx','dc-fu'].forEach(id=>S(id,''));document.getElementById('dc-p').innerHTML=patOpts();openOv('ov-dc');}
 function saveDC(pr){
@@ -2302,44 +2523,29 @@ window.openPat=function(){
 /* ══════════════════════════════════════════
    EDIT APPOINTMENT
 ══════════════════════════════════════════ */
-let _editApptId=null;
+// _editApptId declared at top of appointments section
+// editAppt, saveAppt and openAppt are all defined in the appointments section above
 function editAppt(id){
   loadPats();const a=DB.get('appointments').find(x=>x.id===id);if(!a)return;
   _editApptId=id;
   document.getElementById('appt-mtit').textContent='Edit Appointment';
+  if(document.getElementById('appt-editbadge'))document.getElementById('appt-editbadge').style.display='block';
   document.getElementById('af-p').innerHTML=patOpts();
-  document.getElementById('af-p').value=a.pid;
+  setTimeout(()=>{document.getElementById('af-p').value=a.pid;},0);
   S('af-d',a.date);S('af-t',a.time);S('af-n',a.n||'');
-  document.getElementById('af-pr').value=a.pr;
-  document.getElementById('af-ty').value=a.ty;
+  if(document.getElementById('af-pr'))document.getElementById('af-pr').value=a.pr||'Dr. Karim';
+  if(document.getElementById('af-ty'))document.getElementById('af-ty').value=a.ty||'Consultation';
   openOv('ov-appt');
 }
-const _origSaveAppt=window.saveAppt||saveAppt;
-window.saveAppt=function(){
-  const pid=V('af-p');if(!pid){toast('Select a patient','error');return;}
-  loadPats();const p=pats.find(x=>x.id===pid);
-  if(_editApptId){
-    const ar=DB.get('appointments');const idx=ar.findIndex(x=>x.id===_editApptId);if(idx<0)return;
-    ar[idx]={...ar[idx],pid,pn:`${p.fn} ${p.ln}`,date:V('af-d'),time:V('af-t'),pr:V('af-pr'),ty:V('af-ty'),n:V('af-n')};
-    DB.set('appointments',ar);_editApptId=null;
-    document.getElementById('appt-mtit').textContent='Book Appointment';
-    closeOv('ov-appt');renderAppts();toast('Appointment updated','success');
-  }else{
-    const a={id:DB.id(),pid,pn:`${p.fn} ${p.ln}`,date:V('af-d'),time:V('af-t'),pr:V('af-pr'),ty:V('af-ty'),n:V('af-n'),st:'Scheduled'};
-    const ar=DB.get('appointments');ar.unshift(a);DB.set('appointments',ar);
-    closeOv('ov-appt');S('af-n','');renderAppts();toast('Appointment booked','success');
-  }
-};
 
 /* ══════════════════════════════════════════
-   EDIT BILLING / INVOICE
+   EDIT BILLING / INVOICE (_editBillId declared above)
 ══════════════════════════════════════════ */
-let _editBillId=null;
 function editBill(id){
   loadPats();const b=DB.get('billing').find(x=>x.id===id);if(!b)return;
   _editBillId=id;
   document.getElementById('bill-mtit').textContent='Edit Invoice — '+b.ref;
-  document.getElementById('bill-editbadge').style.display='block';
+  const badge=document.getElementById('bill-editbadge');if(badge)badge.style.display='block';
   document.getElementById('bl-p').innerHTML=patOpts();
   document.getElementById('bl-p').value=b.pid;
   S('bl-d',b.date);S('bl-n',b.n||'');
@@ -2359,50 +2565,34 @@ function editBill(id){
   }
   calcBT();openOv('ov-bill');
 }
-const _origSaveBill=window.saveBill||saveBill;
-window.saveBill=function(pr){
-  const pid=V('bl-p');if(!pid){toast('Select a patient','error');return;}
-  const items=getBillRows();if(!items.length){toast('Add at least one item','error');return;}
-  loadPats();const p=pats.find(x=>x.id===pid);
-  const tot=items.reduce((s,i)=>s+i.tot,0),paid=parseFloat(V('bl-pd'))||0;
-  if(_editBillId){
-    const ar=DB.get('billing');const idx=ar.findIndex(x=>x.id===_editBillId);if(idx<0)return;
-    ar[idx]={...ar[idx],pid,pn:`${p.fn} ${p.ln}`,opd:p.opd,date:V('bl-d'),mt:V('bl-m'),items,tot,paid,bal:tot-paid,st:V('bl-s'),n:V('bl-n'),_edited:td()};
-    DB.set('billing',ar);_editBillId=null;
-    document.getElementById('bill-mtit').textContent='Create Invoice / Receipt';
-    document.getElementById('bill-editbadge').style.display='none';
-    closeOv('ov-bill');renderBill();if(pr)pInvoice(ar[idx].id);else toast('Invoice updated','success');
-  }else{
-    const ar=DB.get('billing');
-    const b={id:DB.id(),ref:nRef('INV',ar),pid,pn:`${p.fn} ${p.ln}`,opd:p.opd,date:V('bl-d'),mt:V('bl-m'),items,tot,paid,bal:tot-paid,st:V('bl-s'),n:V('bl-n')};
-    ar.unshift(b);DB.set('billing',ar);closeOv('ov-bill');renderBill();if(pr)pInvoice(b.id);else toast('Invoice saved — '+b.ref,'success');
-  }
-};
-/* reset billing edit state on new invoice */
-const _origOpenBill=window.openBill||openBill;
-window.openBill=function(){
-  loadPats();S('bl-n','');
-  _editBillId=null;
-  document.getElementById('bill-mtit').textContent='Create Invoice / Receipt';
-  if(document.getElementById('bill-editbadge'))document.getElementById('bill-editbadge').style.display='none';
+/* ══════════════════════════════════════════
+   EDIT BILLING / INVOICE
+   _editBillId declared in original billing section above
+══════════════════════════════════════════ */
+function editBill(id){
+  loadPats();const b=DB.get('billing').find(x=>x.id===id);if(!b)return;
+  _editBillId=id;
+  document.getElementById('bill-mtit').textContent='Edit Invoice — '+b.ref;
+  const badge=document.getElementById('bill-editbadge');if(badge)badge.style.display='block';
   document.getElementById('bl-p').innerHTML=patOpts();
-  const dEl=document.getElementById('bl-d');if(dEl)dEl.value=td();
-  document.getElementById('bltot').textContent='UGX 0';
-  // Reset invoice item rows
+  setTimeout(()=>{document.getElementById('bl-p').value=b.pid;},0);
+  S('bl-d',b.date);S('bl-n',b.n||'');
+  const stEl=document.getElementById('bl-s');if(stEl)stEl.value=b.st||'Unpaid';
+  // Rebuild invoice item rows
   document.getElementById('bl-rows').innerHTML='';bRids=[];
-  addBillRow('Consultation',1,30000);
-  // Reset payment rows — start with one empty row
+  (b.items||[]).forEach(item=>addBillRow(item.d,item.q,item.p));
+  if(!b.items||!b.items.length)addBillRow();
+  // Rebuild payment rows
   document.getElementById('bl-pay-rows').innerHTML='';payRids=[];
-  addPayRow('','Cash');
-  // Reset status display
-  const stTxt=document.getElementById('bl-s-text');if(stTxt)stTxt.textContent='Unpaid';
-  const stDot=document.getElementById('bl-s-dot');if(stDot)stDot.style.background='var(--er)';
-  const stEl=document.getElementById('bl-s');if(stEl)stEl.value='Unpaid';
-  // Reset totals
-  const pdEl=document.getElementById('bl-pd-disp');if(pdEl)pdEl.textContent='UGX 0';
-  const baEl=document.getElementById('bl-ba-disp');if(baEl)baEl.textContent='UGX 0';
-  openOv('ov-bill');
-};
+  if(b.payments&&b.payments.length>0){
+    b.payments.forEach(py=>addPayRow(py.a||0,py.m||'Cash',py.d||'',py.n||''));
+  }else if(Number(b.paid||0)>0){
+    addPayRow(b.paid,b.mt||'Cash',b.date,'');
+  }else{
+    addPayRow('','Cash');
+  }
+  calcBT();openOv('ov-bill');
+}
 
 /* ══════════════════════════════════════════
    SHARE PATIENT FILE
@@ -2505,9 +2695,11 @@ ${dc.length?`<div class="section"><h2>🏥 Discharge Summaries (${dc.length})</h
 // Patch renderPats to include Edit button in rows (override)
 const _origRenderPats=window.renderPats||renderPats;
 window.renderPats=function(){
+  const ptbody=document.getElementById('ptbody');
+  if(!ptbody)return;
   loadPats();const q=V('psrch').toLowerCase();
   const list=pats.filter(p=>`${p.fn} ${p.ln} ${p.opd} ${p.ph||''}`.toLowerCase().includes(q));
-  document.getElementById('ptbody').innerHTML=list.length?list.map(p=>`<tr>
+  ptbody.innerHTML=list.length?list.map(p=>`<tr>
     <td><strong style="color:var(--t7)">${p.opd}</strong></td>
     <td><a href="#" onclick="viewPat('${p.id}');return false" style="color:var(--t6);font-weight:500;text-decoration:none">${p.fn} ${p.ln}</a></td>
     <td><strong style="color:var(--t7)">${agD(p.age)}</strong></td>
@@ -2517,6 +2709,7 @@ window.renderPats=function(){
     <td style="white-space:nowrap">
       <button class="btn btng xs" onclick="viewPat('${p.id}')">View</button>
       <button class="btn btno xs" onclick="editPat('${p.id}')" style="margin-left:3px">✏️</button>
+      ${CU&&(CU.role==='admin'||CU.role==='reception')?`<button class="btn btnd xs" onclick="delRec('patients','${p.id}',renderPats)" title="Delete" style="margin-left:3px">🗑</button>`:''}
     </td>
   </tr>`).join(''):`<tr><td colspan="10" class="nd">No patients found</td></tr>`;
 };
@@ -2554,60 +2747,118 @@ window.viewEnc=function(id){
   openOv('ov-ve');
 };
 
-/* Patch billing table to show Edit button */
+/* Patch billing table to show Edit button + Record Payment */
 const _origRenderBill=window.renderBill||renderBill;
 window.renderBill=function(){
+  const bltb=document.getElementById('bltb');
+  if(!bltb){renderBillStats();return;}
   let l=DB.get('billing');
   const bFil_=window._bFil||'all';
   if(bFil_!=='all')l=l.filter(b=>b.st===bFil_);
-  document.getElementById('bltb').innerHTML=l.length?l.map(b=>`<tr>
-    <td><strong style="color:var(--t7)">${b.ref}</strong></td><td>${fd(b.date)}</td><td>${b.pn}</td>
-    <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${b.items?.map(i=>i.d).join(', ')}</td>
+  // Sort by date desc
+  l.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+  document.getElementById('bltb').innerHTML=l.length?l.map(b=>`<tr style="${b.st==='Unpaid'?'background:rgba(181,50,42,.04);':b.st==='Partial'?'background:rgba(201,124,46,.04);':''}">
+    <td><strong style="color:var(--t7)">${b.ref}</strong></td><td>${fd(b.date)}</td>
+    <td><strong>${b.pn}</strong><div style="font-size:10.5px;color:var(--tx3)">${b.opd||''}</div></td>
+    <td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px">${b.items?.map(i=>i.d).join(', ')}</td>
     <td><strong>${fm(b.tot)}</strong></td>
-    <td>${fm(b.paid)}${b.payments&&b.payments.length>1?`<div style="font-size:10px;color:var(--tx3)">${b.payments.map(p=>p.m).join(' + ')}</div>`:''}</td>
-    <td><span class="b ${b.bal>0?'br':'bg'}">${fm(b.bal)}</span></td>
-    <td style="font-size:12px">${b.mt}</td>
+    <td style="color:var(--ok)">${fm(b.paid)}${b.payments&&b.payments.length>1?`<div style="font-size:10px;color:var(--tx3)">${b.payments.map(p=>p.m).join(' + ')}</div>`:''}</td>
+    <td><span style="font-weight:700;color:${b.bal>0?'var(--er)':'var(--ok)'}">${fm(b.bal)}</span></td>
+    <td style="font-size:11px;color:var(--tx3)">${b.mt}</td>
     <td><span class="b ${b.st==='Paid'?'bg':b.st==='Partial'?'bo':'br'}">${b.st}</span></td>
-    <td style="white-space:nowrap"><button class="btn btng xs" onclick="pInvoice('${b.id}')">🖨</button><button class="btn btno xs" onclick="editBill('${b.id}')" style="margin-left:3px">✏️</button></td>
+    <td style="white-space:nowrap">
+      <button class="btn btng xs" onclick="pInvoice('${b.id}')" title="Print invoice">🖨</button>
+      ${b.st!=='Paid'?`<button class="btn btns xs" onclick="openRecordPayment('${b.id}')" style="margin-left:3px" title="Record payment">💳 Pay</button>`:''}
+      <button class="btn btno xs" onclick="editBill('${b.id}')" style="margin-left:3px" title="Edit invoice">✏️</button>
+      <button class="btn btnd xs" onclick="delRec('billing','${b.id}',renderBill)" title="Delete" style="margin-left:3px">🗑</button>
+    </td>
   </tr>`).join(''):`<tr><td colspan="10" class="nd">No invoices</td></tr>`;
+  renderBillStats();
 };
 // make setBF use _bFil
 const _origSetBF=window.setBF||setBF;
 window.setBF=function(f){window._bFil=f;document.querySelectorAll('[id^="bt-"]').forEach(b=>{b.className='tab'+(b.id==='bt-'+f?' on':'')});renderBill();};
 
-/* Patch appointments table to include edit */
-const _origRenderAppts=window.renderAppts||renderAppts;
-window.renderAppts=function(){
-  let l=DB.get('appointments');const df=V('adf');
-  if(df)l=l.filter(a=>a.date===df);
-  if(window._aFil&&window._aFil!=='all')l=l.filter(a=>a.st===window._aFil);
-  document.getElementById('atbody').innerHTML=l.length?l.map(a=>`<tr>
-    <td>${fd(a.date)}</td><td>${a.time}</td><td><strong>${a.pn}</strong></td><td>${a.pr}</td>
-    <td><span class="b bt">${a.ty}</span></td>
-    <td style="max-width:110px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.n||'—'}</td>
-    <td><span class="b ${a.st==='Completed'?'bg':a.st==='Scheduled'?'bo':'ba'}">${a.st}</span></td>
-    <td style="white-space:nowrap">
-      <button class="btn btno xs" onclick="editAppt('${a.id}')">✏️</button>
-      ${a.st==='Scheduled'?`<button class="btn btng xs" onclick="mkAppt('${a.id}','Completed')" style="margin-left:3px">✓</button><button class="btn btng xs" onclick="mkAppt('${a.id}','Cancelled')">✗</button>`:''}
-    </td>
-  </tr>`).join(''):`<tr><td colspan="8" class="nd">No appointments</td></tr>`;
-};
-window.setAF=function(f){window._aFil=f;document.querySelectorAll('[id^="at-"]').forEach(b=>{b.className='tab'+(b.id==='at-'+f?' on':'')});renderAppts();};
-
-/* also override openAppt to reset edit state */
-const _origOpenAppt=window.openAppt||openAppt;
-window.openAppt=function(){
-  loadPats();S('af-d',td());_editApptId=null;
-  document.getElementById('appt-mtit').textContent='Book Appointment';
-  document.getElementById('af-p').innerHTML=patOpts();openOv('ov-appt');
-};
-
 /* ══════════════════════════════════════════
-   SHARE PANEL IN VIEW PATIENT MODAL
-   (injected into vpat header region)
+   RECORD PAYMENT — for unpaid / partial invoices
+   Opens a focused modal to add a payment without re-editing the whole invoice
 ══════════════════════════════════════════ */
-// Ensure shrwrap exists and view patient header has the right buttons
-// This is done by patching the viewPat function above
+let _rpInvoiceId=null;
+function openRecordPayment(id){
+  const b=DB.get('billing').find(x=>x.id===id);
+  if(!b){toast('Invoice not found','error');return;}
+  _rpInvoiceId=id;
+  // Populate modal
+  document.getElementById('rp-ref').textContent=b.ref;
+  document.getElementById('rp-patient').textContent=b.pn;
+  document.getElementById('rp-tot').textContent=fm(b.tot);
+  document.getElementById('rp-paid').textContent=fm(b.paid);
+  const balEl=document.getElementById('rp-bal');
+  balEl.textContent=fm(b.bal);
+  balEl.style.color=b.bal>0?'var(--er)':'var(--ok)';
+  // Pre-fill amount with outstanding balance
+  document.getElementById('rp-amount').value=b.bal>0?b.bal:'';
+  document.getElementById('rp-method').value='Cash';
+  document.getElementById('rp-ref-note').value='';
+  document.getElementById('rp-date').value=td();
+  // Payment history
+  const hist=document.getElementById('rp-history');
+  const prev=b.payments||[];
+  hist.innerHTML=prev.length?`<div style="font-size:10.5px;font-weight:600;color:var(--t7);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Previous Payments</div>`+prev.map((p,i)=>`<div style="display:flex;justify-content:space-between;font-size:12px;padding:5px 8px;background:var(--okb);border-radius:6px;margin-bottom:4px"><span>${p.m}${p.d?' — '+fd(p.d):''}${p.n?' ('+p.n+')':''}</span><strong style="color:var(--ok)">${fm(p.a)}</strong></div>`).join(''):'<div style="font-size:12px;color:var(--tx3)">No previous payments</div>';
+  openOv('ov-rp');
+}
+
+async function saveRecordPayment(){
+  const id=_rpInvoiceId;
+  if(!id){toast('No invoice selected','error');return;}
+  const amount=parseFloat(document.getElementById('rp-amount').value)||0;
+  if(amount<=0){toast('Enter a valid payment amount','error');return;}
+  const method=document.getElementById('rp-method').value;
+  const ref=document.getElementById('rp-ref-note').value;
+  const payDate=document.getElementById('rp-date').value;
+
+  // Update via server for persistence
+  try {
+    const formData=new FormData();
+    formData.append('invoice_id',id);
+    formData.append('amount',amount);
+    formData.append('method',method);
+    formData.append('ref',ref);
+    formData.append('pay_date',payDate);
+    const resp=await fetch('api.php?action=record_payment',{method:'POST',body:formData});
+    const result=await resp.json();
+    if(result.success){
+      // Refresh local DB
+      const getResp=await fetch('api.php?action=get');
+      const newDB=await getResp.json();
+      for(const[appKey,tableKey] of Object.entries(KEY_MAP)){
+        LOCAL_DB[appKey]=newDB[tableKey]||[];
+      }
+      closeOv('ov-rp');
+      renderBill();
+      toast(`Payment of ${fm(amount)} recorded — Invoice ${result.new_status}`,'success');
+    }else{
+      toast(result.error||'Failed to record payment','error');
+    }
+  }catch(e){
+    // Fallback: update locally if server fails
+    const ar=DB.get('billing');
+    const idx=ar.findIndex(x=>x.id===id);
+    if(idx<0){toast('Invoice not found','error');return;}
+    const b=ar[idx];
+    const prev=b.payments||[];
+    prev.push({a:amount,m:method,d:payDate,n:ref});
+    const newPaid=Number(b.paid||0)+amount;
+    const newBal=Number(b.tot||0)-newPaid;
+    const newStatus=newPaid<=0?'Unpaid':newBal>0?'Partial':'Paid';
+    const newMt=[...new Set(prev.map(p=>p.m))].join(' + ');
+    ar[idx]={...b,paid:newPaid,bal:newBal<0?0:newBal,st:newStatus,mt:newMt,payments:prev};
+    DB.set('billing',ar);
+    closeOv('ov-rp');
+    renderBill();
+    toast(`Payment recorded locally — Invoice ${newStatus}`,'success');
+  }
+}
 
 /* ══════════════════════════════════════════
    OTC DAILY SALES
@@ -2932,6 +3183,20 @@ function collectIncome(){
     }
   });
 
+  // 4. Manual income entries
+  (DB.get('manual_income')||[]).forEach(m=>{
+    if(!inRange(m.date))return;
+    items.push({
+      date:m.date,
+      source:'Manual Income',
+      desc:`${m.cat||'Other'} — ${m.desc||''}`,
+      method:m.m||m.method||'Cash',
+      amt:Number(m.amt||m.amount||0),
+      ref:m.ref||'',
+      _manualId:m.id,
+    });
+  });
+
   return items.sort((a,b)=>b.date.localeCompare(a.date));
 }
 
@@ -3056,11 +3321,14 @@ function renderFinance(){
   // Day range label
   const drEl=document.getElementById('fin-day-range');
   if(drEl){drEl.textContent=days.length?days[days.length-1]===days[0]?fd(days[0]):''+fd(days[days.length-1])+' – '+fd(days[0]):'No data';}
-  document.getElementById('fin-inc-count').textContent=income.length+' transaction'+(income.length!==1?'s':'');
-  document.getElementById('fin-exp-count').textContent=expenses.length+' entry'+(expenses.length!==1?'s':'');
+  const incCountEl=document.getElementById('fin-inc-count');
+  if(incCountEl)incCountEl.textContent=income.length+' transaction'+(income.length!==1?'s':'');
+  const expCountEl=document.getElementById('fin-exp-count');
+  if(expCountEl)expCountEl.textContent=expenses.length+' entry'+(expenses.length!==1?'s':'');
 
   /* Income transactions table */
-  document.getElementById('fin-inc-tbody').innerHTML=income.length?income.map(x=>`<tr>
+  const incTbody=document.getElementById('fin-inc-tbody');
+  if(incTbody)incTbody.innerHTML=income.length?income.map(x=>`<tr>
     <td>${fd(x.date)}</td>
     <td><span class="b bg" style="font-size:10.5px">${x.source}</span></td>
     <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${x.desc}</td>
@@ -3070,17 +3338,19 @@ function renderFinance(){
   </tr>`).join(''):`<tr><td colspan="6" class="nd">No income transactions in this period</td></tr>`;
 
   /* Expenditure transactions table */
-  document.getElementById('fin-exp-tbody').innerHTML=expenses.length?expenses.map(e=>`<tr>
+  const expTbody=document.getElementById('fin-exp-tbody');
+  if(expTbody)expTbody.innerHTML=expenses.length?expenses.map(e=>`<tr>
     <td>${fd(e.date)}</td>
-    <td><span class="b br" style="font-size:10.5px">${e.cat}</span></td>
-    <td>${e.desc}${e.ref?` <span style="font-size:10.5px;color:var(--tx3)">[${e.ref}]</span>`:''}</td>
-    <td style="font-weight:700;color:var(--er)">${fm(e.amt)}</td>
+    <td><span class="b br" style="font-size:10.5px">${e.cat||'Other'}</span></td>
+    <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${e.desc||'—'}${e.ref?` <span style="font-size:10.5px;color:var(--tx3)">[${e.ref}]</span>`:''}</td>
+    <td style="font-size:12px">${e.m||e.method||'Cash'}</td>
+    <td style="font-weight:700;color:var(--er)">${fm(e.amt||e.amount||0)}</td>
     <td>${e.by||'—'}</td>
     <td style="white-space:nowrap">
       <button class="btn btno xs" onclick="editExpense('${e.id}')">✏️</button>
       <button class="btn btnd xs" onclick="delRec('expenses','${e.id}',renderFinance)" style="margin-left:3px">🗑</button>
     </td>
-  </tr>`).join(''):`<tr><td colspan="6" class="nd">No expenditure recorded in this period</td></tr>`;
+  </tr>`).join(''):`<tr><td colspan="7" class="nd">No expenditure recorded in this period</td></tr>`;
 }
 
 function toggleFinTable(which){
@@ -3140,8 +3410,9 @@ function openIncome(){
   _editIncId=null;
   document.getElementById('inc-mtit').textContent='Record Manual Income';
   document.getElementById('inc-sbtn').textContent='Save Income';
-  S('inc-d',td());S('inc-amt','');S('inc-desc','');S('inc-by','');
+  S('inc-d',td());S('inc-amt','');S('inc-desc','');S('inc-by','');S('inc-ref','');
   document.getElementById('inc-cat').selectedIndex=0;
+  const incMEl=document.getElementById('inc-m');if(incMEl)incMEl.selectedIndex=0;
   const disp=document.getElementById('inc-amt-disp');if(disp)disp.textContent='UGX 0';
   openOv('ov-inc');
   setTimeout(()=>document.getElementById('inc-amt').focus(),120);
@@ -3152,8 +3423,9 @@ function editIncome(id){
   _editIncId=id;
   document.getElementById('inc-mtit').textContent='Edit Income Entry';
   document.getElementById('inc-sbtn').textContent='Save Changes';
-  S('inc-d',e.date);S('inc-amt',e.amt);S('inc-desc',e.desc);S('inc-by',e.by||'');
+  S('inc-d',e.date);S('inc-amt',e.amt);S('inc-desc',e.desc);S('inc-by',e.by||'');S('inc-ref',e.ref||'');
   document.getElementById('inc-cat').value=e.cat;
+  const incMEl=document.getElementById('inc-m');if(incMEl)incMEl.value=e.m||'Cash';
   const disp=document.getElementById('inc-amt-disp');if(disp)disp.textContent=fm(e.amt);
   openOv('ov-inc');
 }
@@ -3164,7 +3436,7 @@ function updIncPreview(){
   if(disp)disp.textContent='UGX '+v.toLocaleString();
 }
 
-function saveIncome(){
+function saveIncome(addAnother){
   const amt=parseFloat(V('inc-amt'));
   const desc=V('inc-desc').trim();
   if(!amt||amt<=0){toast('Enter a valid amount','error');return;}
@@ -3175,8 +3447,10 @@ function saveIncome(){
     date:V('inc-d')||td(),
     amt,
     cat:V('inc-cat'),
+    m:V('inc-m')||'Cash',
     desc,
     by:V('inc-by'),
+    ref:V('inc-ref')||'',
     _saved:new Date().toISOString()
   };
   if(_editIncId){
@@ -3188,7 +3462,15 @@ function saveIncome(){
     toast('Income recorded — '+fm(amt),'success');
   }
   DB.set('manual_income',arr);_editIncId=null;
-  closeOv('ov-inc');renderFinance();
+  if(addAnother){
+    // Keep modal open, reset form for next entry
+    S('inc-amt','');S('inc-desc','');S('inc-ref','');
+    const disp=document.getElementById('inc-amt-disp');if(disp)disp.textContent='UGX 0';
+    setTimeout(()=>document.getElementById('inc-amt').focus(),80);
+    renderFinance();
+  }else{
+    closeOv('ov-inc');renderFinance();
+  }
 }
 
 /* ── EXPENDITURE CRUD ── */
@@ -3249,7 +3531,13 @@ function saveExpense(){
 
 /* ── INIT ── */
 (function(){
-
-  const s=sessionStorage.getItem('hak_u');
-  if(s){CU=JSON.parse(s);bootApp();}else switchScr('sl');
+  try {
+    if(window._SERVER_CU){
+      CU = window._SERVER_CU;
+    } else {
+      var s = sessionStorage.getItem('hak_u');
+      if(s) CU = JSON.parse(s);
+    }
+    if(CU){ bootApp(); }
+  } catch(e){ console.error('Boot error:', e); }
 })();

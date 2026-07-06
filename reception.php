@@ -12,6 +12,17 @@ require_once 'header.php';
 <!-- MODULE: DASHBOARD -->
 <div class="page" id="pg-dashboard">
         <div class="wb"><div><div class="wbt" id="wbg">Good morning</div><div class="wbs" id="wbd"></div></div><div class="wbp">HAK Medical &amp; Physiotherapy Center</div></div>
+        <!-- Pending appointments alert banner -->
+        <div id="dash-pending-alert" style="display:none;background:linear-gradient(135deg,#fff3cd,#ffeaa7);border:1.5px solid #ffc107;border-radius:12px;padding:13px 18px;margin-bottom:14px;align-items:center;justify-content:space-between">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:20px">⏳</span>
+            <div>
+              <div style="font-weight:700;color:#856404;font-size:14px" id="dash-pending-count">0 appointments awaiting your approval</div>
+              <div style="font-size:12px;color:#997404">Review and approve or reject patient appointment requests</div>
+            </div>
+          </div>
+          <button class="btn" style="background:#856404;color:white;border:none;padding:8px 16px;border-radius:8px;font-weight:600;font-size:12px" onclick="nav('appointments');window.setAF&&setAF('Pending')">Review Now →</button>
+        </div>
         <div class="srow" id="dstats"></div>
         <div class="gr2">
           <div class="card"><div class="ch"><h2>Today's Appointments</h2><button class="btn btno sm" onclick="nav('appointments')">All</button></div><div class="tw"><table><thead><tr><th>Time</th><th>Patient</th><th>Type</th><th>Status</th></tr></thead><tbody id="dappts"></tbody></table></div></div>
@@ -52,10 +63,22 @@ require_once 'header.php';
               <div class="fg gall"><label class="fl">Patient *</label><select class="fs" id="qi-p" onchange="qiPatChange()"></select></div>
               <div class="fg"><label class="fl">Date</label><input class="fi" type="date" id="qi-date"></div>
             </div>
+            <!-- Common services quick-pick -->
+            <div style="margin-bottom:12px">
+              <div style="font-size:10.5px;font-weight:600;color:var(--t7);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px">⚡ Quick Add Common Services</div>
+              <div style="display:flex;gap:6px;flex-wrap:wrap">
+                <button class="btn btno sm" onclick="addQIRow('Consultation',1,30000)" style="font-size:11.5px">+ Consultation (30K)</button>
+                <button class="btn btno sm" onclick="addQIRow('Physiotherapy Session',1,50000)" style="font-size:11.5px">+ Physio (50K)</button>
+                <button class="btn btno sm" onclick="addQIRow('Ultrasound',1,80000)" style="font-size:11.5px">+ Ultrasound (80K)</button>
+                <button class="btn btno sm" onclick="addQIRow('Laboratory Tests',1,25000)" style="font-size:11.5px">+ Lab (25K)</button>
+                <button class="btn btno sm" onclick="addQIRow('Dressing / Procedure',1,20000)" style="font-size:11.5px">+ Dressing (20K)</button>
+                <button class="btn btno sm" onclick="addQIRow('Antenatal Visit',1,35000)" style="font-size:11.5px">+ ANC (35K)</button>
+              </div>
+            </div>
             <!-- Invoice Items -->
             <div class="stit">Invoice Items</div>
             <div id="qi-rows"></div>
-            <button class="btn btno sm mb12" onclick="addQIRow()">+ Add Item</button>
+            <button class="btn btno sm mb12" onclick="addQIRow()">+ Add Custom Item</button>
             <!-- Grand Total bar -->
             <div style="background:var(--t7);border-radius:var(--r);padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center">
               <span style="font-size:12px;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.06em">Grand Total</span>
@@ -93,12 +116,15 @@ require_once 'header.php';
             <div class="tabs" style="margin-bottom:0">
               <button class="tab on" id="bt-all" onclick="setBF('all')">All</button>
               <button class="tab" id="bt-Unpaid" onclick="setBF('Unpaid')">Unpaid</button>
-              <button class="tab" id="bt-Paid" onclick="setBF('Paid')">Paid</button>
               <button class="tab" id="bt-Partial" onclick="setBF('Partial')">Partial</button>
+              <button class="tab" id="bt-Paid" onclick="setBF('Paid')">Paid</button>
             </div>
-            <button class="btn btno sm" onclick="openBill()" style="margin-left:auto">+ Via Dialog</button>
+            <div style="display:flex;gap:7px;margin-left:auto;align-items:center">
+              <button class="btn btno sm" onclick="printBillReport()">🖨 Report</button>
+              <button class="btn btno sm" onclick="openBill()">+ Via Dialog</button>
+            </div>
           </div>
-          <div class="tw"><table><thead><tr><th>Invoice</th><th>Date</th><th>Patient</th><th>Items</th><th>Total</th><th>Paid</th><th>Balance</th><th>Method</th><th>Status</th><th></th></tr></thead><tbody id="bltb"></tbody></table></div>
+          <div class="tw"><table><thead><tr><th>Invoice</th><th>Date</th><th>Patient</th><th>Services</th><th>Total</th><th>Paid</th><th>Balance</th><th>Method</th><th>Status</th><th>Actions</th></tr></thead><tbody id="bltb"></tbody></table></div>
         </div>
       </div>
 

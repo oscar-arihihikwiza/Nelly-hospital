@@ -29,6 +29,18 @@ function init_database() {
         } catch (Exception $e) {
             // Column might already exist
         }
+        // Migrate billing_invoices: add payments column if missing
+        try {
+            $pdo->exec('ALTER TABLE billing_invoices ADD COLUMN payments TEXT');
+        } catch (Exception $e) {
+            // Column might already exist
+        }
+        // Migrate appointments: ensure st column exists
+        try {
+            $pdo->exec("ALTER TABLE appointments ADD COLUMN st TEXT DEFAULT 'Pending'");
+        } catch (Exception $e) {
+            // Column might already exist
+        }
     }
     
     return $pdo;

@@ -1,7 +1,5 @@
 <?php
-// patient.php
-// Patient portal - see own records and book appointments
-
+// patient.php - Patient Portal
 require_once 'auth.php';
 check_login();
 
@@ -11,421 +9,476 @@ if ($_SESSION['user']['role'] !== 'patient') {
 }
 
 $user = $_SESSION['user'];
-$pdo = get_pdo();
+$pdo  = get_pdo();
 
-// Find patient by name (or later add a user-patient mapping)
+// Find patient record by matching user name
 $stmt = $pdo->prepare('SELECT * FROM patients WHERE fn || " " || ln = ? LIMIT 1');
 $stmt->execute([$user['name']]);
-$patient = $stmt->fetch();
+$patient    = $stmt->fetch();
+$patient_id = $patient ? $patient['id'] : null;
 
-if (!$patient) {
-    // If no patient found, maybe redirect to register, but let's just handle it
-    $patient = null;
+// Handle appointment booking POST
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'book_appointment') {
+    if (!$patient_id) {
+        header('Location: patient.php?error=No+patient+record+found');
+        exit;
+    }
+    $date = trim($_POST['date'] ?? '');
+    $time = trim($_POST['time'] ?? '');
+    $pr   = trim($_POST['pr']   ?? 'Dr. Karim');
+    $ty   = trim($_POST['ty']   ?? 'Consultation');
+    $n    = trim($_POST['n']    ?? '');
+
+    if (!$date || !$time) {
+        header('Location: patient.php?error=Date+and+time+are+required');
+        exit;
+    }
+    if ($date < date('Y-m-d')) {
+        header('Location: patient.php?error=Please+select+a+future+date');
+        exit;
+    }
+
+    try {
+        $stmt = $pdo->prepare('INSERT INTO appointments (pid, pn, date, time, pr, ty, n, st) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        $pn   = $patient['fn'] . ' ' . $patient['ln'];
+        $stmt->execute([$patient_id, $pn, $date, $time, $pr, $ty, $n, 'Pending']);
+        header('Location: patient.php?booked=1');
+        exit;
+    } catch (Exception $e) {
+        header('Location: patient.php?error=Booking+failed+please+try+again');
+        exit;
+    }
 }
 
-$patient_id = $patient ? $patient['id'] : null;
-?>
-<?php
-// Create a modified header without sidebar (or simplified)
+// Fetch this patient's own data directly from DB (not full DB dump)
+$myAppts = $myEncs = $myLab = $myUS = $myRx = $myBills = [];
+if ($patient_id) {
+    $s = $pdo->prepare('SELECT * FROM appointments WHERE pid=? ORDER BY date DESC, time DESC'); $s->execute([$patient_id]); $myAppts = $s->fetchAll();
+    $s = $pdo->prepare('SELECT * FROM encounters  WHERE pid=? ORDER BY date DESC');              $s->execute([$patient_id]); $myEncs  = $s->fetchAll();
+    $s = $pdo->prepare('SELECT * FROM lab_reports  WHERE pid=? ORDER BY date DESC');             $s->execute([$patient_id]); $myLab   = $s->fetchAll();
+    $s = $pdo->prepare('SELECT * FROM us_reports   WHERE pid=? ORDER BY date DESC');             $s->execute([$patient_id]); $myUS    = $s->fetchAll();
+    $s = $pdo->prepare('SELECT * FROM prescriptions WHERE pid=? ORDER BY date DESC');            $s->execute([$patient_id]); $myRx    = $s->fetchAll();
+    $s = $pdo->prepare('SELECT * FROM billing_invoices WHERE pid=? ORDER BY date DESC');         $s->execute([$patient_id]); $myBills = $s->fetchAll();
+}
+
+function statusBadge(string $st): string {
+    $map = [
+        'Pending'   => 'bg-warning text-dark',
+        'Scheduled' => 'bg-primary',
+        'Completed' => 'bg-success',
+        'Cancelled' => 'bg-secondary',
+        'Rejected'  => 'bg-danger',
+    ];
+    $cls = $map[$st] ?? 'bg-secondary';
+    $lbl = $st === 'Pending' ? '⏳ Pending Approval' : $st;
+    return "<span class=\"badge {$cls}\">{$lbl}</span>";
+}
+function billBadge(string $st): string {
+    $map = ['Paid'=>'bg-success','Partial'=>'bg-warning text-dark','Unpaid'=>'bg-danger'];
+    return '<span class="badge '.($map[$st]??'bg-secondary').'">'.$st.'</span>';
+}
+function fmUGX(float $n): string { return 'UGX '.number_format($n, 0); }
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Patient Portal - HAK Medical &amp; Physiotherapy Center</title>
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Patient Portal — HAK Medical &amp; Physiotherapy Center</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;700&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
-<link rel="stylesheet" href="index.css">
-<script>
-const SERVER_DB = <?php echo get_database_json(); ?>;
-const KEY_MAP = {
-  'patients': 'patients',
-  'appointments': 'appointments',
-  'encounters': 'encounters',
-  'inventory': 'inventory',
-  'lab_req': 'lab_requests',
-  'lab_rep': 'lab_reports',
-  'us_req': 'us_requests',
-  'us_rep': 'us_reports',
-  'rx': 'prescriptions',
-  'dis': 'dispensing_log',
-  'billing': 'billing',
-  'discharge': 'discharge',
-  'otc_sales': 'otc_sales',
-  'manual_income': 'manual_income',
-  'expenses': 'expenses'
-};
-let LOCAL_DB = {};
-function initDB() {
-  for (const [appKey, tableKey] of Object.entries(KEY_MAP)) {
-    LOCAL_DB[appKey] = SERVER_DB[tableKey] || [];
-  }
-}
-initDB();
-const DB={
-  get(k){ return LOCAL_DB[k] || []; },
-  set(k,v){
-    LOCAL_DB[k] = v;
-    const tableKey = KEY_MAP[k] || k;
-    try {
-      const formData = new FormData();
-      formData.append('key', tableKey);
-      formData.append('data', JSON.stringify(v));
-      fetch('api.php?action=save', { method: 'POST', body: formData });
-    } catch (e) { console.error('Sync error:', e); }
-  },
-  id(){return Date.now().toString(36)+Math.random().toString(36).slice(2,5);}
-};
-function fd(d){if(!d)return'—';return new Date(d+'T00:00:00').toLocaleDateString('en-UG',{day:'2-digit',month:'short',year:'numeric'});}
-function td(){return new Date().toISOString().slice(0,10);}
-</script>
+<style>
+body{font-family:'Outfit',sans-serif;background:#f0f7fa;color:#0f1e25}
+.portal-nav{background:linear-gradient(135deg,#0a2e3a,#145369);padding:14px 24px;display:flex;justify-content:space-between;align-items:center}
+.portal-nav .brand{color:white;font-family:'Playfair Display',serif;font-size:20px;font-weight:700;display:flex;align-items:center;gap:10px}
+.portal-nav .brand svg{width:32px;height:32px;flex-shrink:0}
+.portal-nav .user-info{color:rgba(255,255,255,.8);font-size:13px;display:flex;align-items:center;gap:12px}
+.profile-card{background:white;border-radius:14px;padding:20px 24px;margin-bottom:20px;box-shadow:0 2px 12px rgba(26,107,135,.1)}
+.profile-field{border-bottom:1px solid #eaf3f7;padding:8px 0;display:flex;gap:8px}
+.profile-field .lbl{font-size:10.5px;color:#5a7a8a;text-transform:uppercase;letter-spacing:.05em;min-width:120px;flex-shrink:0;margin-top:2px}
+.profile-field .val{font-weight:500;font-size:13.5px}
+.allergy-alert{background:#fceeed;border:1.5px solid #e88;border-radius:10px;padding:10px 14px;margin-top:12px;color:#b5322a;font-weight:600;font-size:13px}
+.section-card{background:white;border-radius:14px;padding:0;margin-bottom:16px;box-shadow:0 2px 12px rgba(26,107,135,.08);overflow:hidden}
+.section-card .sc-head{background:#eaf6fb;padding:14px 20px;font-weight:700;font-size:14px;color:#1a6b87;border-bottom:1px solid #d4eff8;display:flex;justify-content:space-between;align-items:center}
+.section-card .sc-body{padding:16px 20px}
+.nav-pills .nav-link{color:#5a7a8a;font-size:13px;padding:8px 16px;border-radius:99px;font-weight:500}
+.nav-pills .nav-link.active{background:#2089ab;color:white}
+.tab-content>.tab-pane{display:none}.tab-content>.tab-pane.show.active{display:block}
+table th{font-size:11px;color:#5a7a8a;text-transform:uppercase;letter-spacing:.05em;background:#f7fbfd;border-bottom:1.5px solid #d4eff8 !important}
+table td{font-size:13px;vertical-align:middle;border-color:#eef4f7 !important}
+.btn-book{background:linear-gradient(135deg,#2089ab,#145369);color:white;border:none;border-radius:8px;padding:9px 20px;font-weight:600;font-size:13.5px;cursor:pointer;transition:all .2s}
+.btn-book:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(32,137,171,.4)}
+.empty-state{text-align:center;padding:32px 20px;color:#5a7a8a}
+.empty-state .icon{font-size:36px;margin-bottom:8px;opacity:.5}
+.modal-content{border-radius:14px;border:none;box-shadow:0 8px 32px rgba(10,46,58,.18)}
+.modal-header{background:#eaf6fb;border-bottom:1px solid #d4eff8;border-radius:14px 14px 0 0}
+.form-label{font-size:11px;color:#5a7a8a;text-transform:uppercase;letter-spacing:.05em;font-weight:600;margin-bottom:4px}
+.form-control,.form-select{border:1.5px solid #cde6f0;border-radius:8px;font-size:13px;padding:9px 12px}
+.form-control:focus,.form-select:focus{border-color:#2089ab;box-shadow:0 0 0 3px rgba(32,137,171,.15)}
+.toast-fixed{position:fixed;bottom:20px;right:20px;z-index:9999;min-width:280px}
+</style>
 </head>
 <body>
-<div id="toast"></div>
-<div class="po" id="parea"></div>
 
-<div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <div>
-            <h2 class="fw-bold" style="color: #2089ab;">HAK Medical Center</h2>
-            <p class="mb-0 text-muted">Patient Portal</p>
-        </div>
-        <div class="d-flex gap-2 align-items-center">
-            <span class="fw-semibold">Hi, <?php echo htmlspecialchars($user['name']); ?></span>
-            <a href="logout.php" class="btn btn-outline-danger btn-sm">Logout</a>
-        </div>
-    </div>
+<!-- NAV -->
+<nav class="portal-nav">
+  <div class="brand">
+    <svg viewBox="0 0 36 36" fill="none"><rect x="14.5" y="4" width="7" height="28" rx="3.5" fill="white" opacity=".9"/><rect x="4" y="14.5" width="28" height="7" rx="3.5" fill="white" opacity=".9"/></svg>
+    HAK Medical &amp; Physiotherapy Center
+  </div>
+  <div class="user-info">
+    <span>👋 <?php echo htmlspecialchars($user['name']); ?></span>
+    <a href="logout.php" class="btn btn-sm btn-outline-light" style="border-color:rgba(255,255,255,.4);font-size:12px">Sign Out</a>
+  </div>
+</nav>
 
-    <?php if (!$patient): ?>
-        <div class="alert alert-warning">
-            <h4>Welcome!</h4>
-            <p>We don't have your patient record yet. Please contact reception to complete your registration.</p>
-        </div>
-    <?php else: ?>
-        <!-- Patient Profile -->
-        <div class="card mb-4">
-            <div class="card-body">
-                <h4 class="card-title">Profile</h4>
-                <div class="row">
-                    <div class="col-md-3"><strong>OPD Number:</strong> <?php echo htmlspecialchars($patient['opd']); ?></div>
-                    <div class="col-md-3"><strong>Name:</strong> <?php echo htmlspecialchars($patient['fn'] . ' ' . $patient['ln']); ?></div>
-                    <div class="col-md-3"><strong>Age:</strong> <?php echo htmlspecialchars($patient['age'] ?: '—'); ?></div>
-                    <div class="col-md-3"><strong>Sex:</strong> <?php echo htmlspecialchars($patient['sex'] ?: '—'); ?></div>
-                    <div class="col-md-3"><strong>Blood Type:</strong> <?php echo htmlspecialchars($patient['bl'] ?: '—'); ?></div>
-                    <div class="col-md-3"><strong>Phone:</strong> <?php echo htmlspecialchars($patient['ph'] ?: '—'); ?></div>
-                    <div class="col-md-3"><strong>Insurance:</strong> <?php echo htmlspecialchars($patient['ins'] ?: 'None'); ?></div>
-                    <div class="col-md-3"><strong>Allergies:</strong> <?php echo htmlspecialchars($patient['al'] ?: 'None'); ?></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Tabs -->
-        <ul class="nav nav-tabs mb-4" id="patientTabs" role="tablist">
-            <li class="nav-item">
-                <button class="nav-link active" id="appointments-tab" data-bs-toggle="tab" data-bs-target="#appointments" type="button">Appointments</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="encounters-tab" data-bs-toggle="tab" data-bs-target="#encounters" type="button">Encounters</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="lab-tab" data-bs-toggle="tab" data-bs-target="#lab" type="button">Lab Reports</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="us-tab" data-bs-toggle="tab" data-bs-target="#us" type="button">Ultrasound Reports</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="rx-tab" data-bs-toggle="tab" data-bs-target="#rx" type="button">Prescriptions</button>
-            </li>
-            <li class="nav-item">
-                <button class="nav-link" id="billing-tab" data-bs-toggle="tab" data-bs-target="#billing" type="button">Billing</button>
-            </li>
-        </ul>
-
-        <div class="tab-content" id="patientTabsContent">
-            <!-- Appointments -->
-            <div class="tab-pane fade show active" id="appointments">
-                <div class="card mb-3">
-                    <div class="card-body">
-                        <h5 class="card-title">Your Appointments</h5>
-                        <button class="btn btn-primary btn-sm mb-3" onclick="openAppointmentForm()">Book New Appointment</button>
-                        <div id="appointments-list"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Encounters -->
-            <div class="tab-pane fade" id="encounters">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Your Encounters</h5>
-                        <div id="encounters-list"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Lab Reports -->
-            <div class="tab-pane fade" id="lab">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Lab Reports</h5>
-                        <div id="lab-list"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Ultrasound Reports -->
-            <div class="tab-pane fade" id="us">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Ultrasound Reports</h5>
-                        <div id="us-list"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Prescriptions -->
-            <div class="tab-pane fade" id="rx">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Prescriptions</h5>
-                        <div id="rx-list"></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Billing -->
-            <div class="tab-pane fade" id="billing">
-                <div class="card">
-                    <div class="card-body">
-                        <h5 class="card-title">Billing Records</h5>
-                        <div id="billing-list"></div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    <?php endif; ?>
+<!-- Toast -->
+<div class="toast-fixed">
+  <div id="liveToast" class="toast align-items-center text-bg-success border-0" role="alert">
+    <div class="d-flex"><div class="toast-body" id="toastMsg"></div><button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button></div>
+  </div>
 </div>
 
-<!-- Appointment Booking Modal -->
-<div class="modal fade" id="appointmentModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Book Appointment</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body">
-                <div class="mb-3">
-                    <label class="form-label">Date</label>
-                    <input type="date" id="appt-date" class="form-control">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Time</label>
-                    <input type="time" id="appt-time" class="form-control">
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Provider</label>
-                    <select id="appt-pr" class="form-select">
-                        <option value="Dr. Karim">Dr. Karim</option>
-                        <option value="Physiotherapist">Physiotherapist</option>
-                        <option value="Nurse">Nurse</option>
-                    </select>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Type</label>
-                    <select id="appt-ty" class="form-select">
-                        <option value="Consultation">Consultation</option>
-                        <option value="Follow-up">Follow-up</option>
-                        <option value="Physio">Physiotherapy</option>
-                        <option value="Ultrasound">Ultrasound</option>
-                    </select>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Notes</label>
-                    <textarea id="appt-n" class="form-control" rows="2"></textarea>
-                </div>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-primary" onclick="saveAppointment()">Book</button>
-            </div>
-        </div>
+<div class="container py-4" style="max-width:960px">
+
+<?php if (!$patient): ?>
+<div class="alert alert-warning rounded-3 shadow-sm">
+  <h5>👋 Welcome to your Patient Portal</h5>
+  <p class="mb-0">Your account is not yet linked to a patient record. Please contact our reception desk — <strong>0705 062 567</strong> — and they will complete your registration.</p>
+</div>
+<?php else: ?>
+
+<!-- PROFILE CARD -->
+<div class="profile-card">
+  <div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+      <h4 class="mb-0 fw-bold" style="color:#1a6b87"><?php echo htmlspecialchars($patient['fn'].' '.$patient['ln']); ?></h4>
+      <div style="color:#5a7a8a;font-size:13px"><?php echo htmlspecialchars($patient['opd']); ?> &nbsp;·&nbsp;
+        <?php echo $patient['age'] ? $patient['age'].'y' : '—'; ?> &nbsp;·&nbsp;
+        <?php echo htmlspecialchars($patient['sex'] ?: '—'); ?>
+      </div>
     </div>
+    <button class="btn-book" onclick="showBookingModal()">+ Book Appointment</button>
+  </div>
+  <div class="row g-0">
+    <?php foreach([
+      ['Blood Type', $patient['bl'] ?: 'Unknown'],
+      ['Phone', $patient['ph'] ?: '—'],
+      ['Address', $patient['ad'] ?: '—'],
+      ['Insurance', $patient['ins'] ?: 'None'],
+      ['Occupation', $patient['oc'] ?: '—'],
+      ['Emergency', $patient['em'] ?: '—'],
+    ] as [$lbl,$val]): ?>
+    <div class="col-md-4"><div class="profile-field"><span class="lbl"><?= $lbl ?></span><span class="val"><?= htmlspecialchars($val) ?></span></div></div>
+    <?php endforeach; ?>
+  </div>
+  <?php if ($patient['al'] && $patient['al'] !== 'None'): ?>
+  <div class="allergy-alert">⚠ Known Allergies: <?php echo htmlspecialchars($patient['al']); ?></div>
+  <?php endif; ?>
+</div>
+
+<!-- TABS -->
+<ul class="nav nav-pills mb-3 flex-wrap gap-1" id="portalTabs" role="tablist">
+  <?php foreach([
+    ['appts','Appointments',count($myAppts)],
+    ['encs','Encounters',count($myEncs)],
+    ['lab','Lab Reports',count($myLab)],
+    ['us','Ultrasound',count($myUS)],
+    ['rx','Prescriptions',count($myRx)],
+    ['bills','Billing',count($myBills)],
+  ] as $i=>[$tid,$lbl,$cnt]): ?>
+  <li class="nav-item" role="presentation">
+    <button class="nav-link <?= $i===0?'active':'' ?>" data-bs-toggle="pill" data-bs-target="#tab-<?= $tid ?>" type="button">
+      <?= $lbl ?> <?php if($cnt>0): ?><span class="badge bg-secondary ms-1" style="font-size:10px"><?= $cnt ?></span><?php endif; ?>
+    </button>
+  </li>
+  <?php endforeach; ?>
+</ul>
+
+<div class="tab-content">
+
+<!-- TAB: APPOINTMENTS -->
+<div class="tab-pane fade show active" id="tab-appts">
+  <div class="section-card">
+    <div class="sc-head">📅 Your Appointments <button class="btn-book btn btn-sm" onclick="showBookingModal()" style="font-size:12px;padding:5px 14px">+ Book New</button></div>
+    <div class="sc-body">
+      <?php if (empty($myAppts)): ?>
+      <div class="empty-state"><div class="icon">📅</div><div>No appointments yet.</div><button class="btn-book mt-3" onclick="showBookingModal()">Book Your First Appointment</button></div>
+      <?php else: ?>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Date</th><th>Time</th><th>Provider</th><th>Type</th><th>Status</th><th>Notes</th></tr></thead>
+          <tbody>
+          <?php foreach($myAppts as $a): ?>
+          <tr>
+            <td><?= date('d M Y', strtotime($a['date'])) ?></td>
+            <td><?= htmlspecialchars($a['time'] ?? '—') ?></td>
+            <td><?= htmlspecialchars($a['pr'] ?? '—') ?></td>
+            <td><span class="badge bg-info text-dark"><?= htmlspecialchars($a['ty'] ?? '—') ?></span></td>
+            <td><?= statusBadge($a['st'] ?? '') ?></td>
+            <td style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= htmlspecialchars($a['n'] ?? '—') ?></td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: ENCOUNTERS -->
+<div class="tab-pane fade" id="tab-encs">
+  <div class="section-card">
+    <div class="sc-head">📋 Clinical Encounters</div>
+    <div class="sc-body">
+      <?php if (empty($myEncs)): ?>
+      <div class="empty-state"><div class="icon">📋</div><div>No encounters recorded yet.</div></div>
+      <?php else: ?>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Date</th><th>Type</th><th>Provider</th><th>Complaint</th><th>Diagnosis</th><th>Status</th></tr></thead>
+          <tbody>
+          <?php foreach($myEncs as $e): ?>
+          <tr>
+            <td><?= date('d M Y', strtotime($e['date'])) ?></td>
+            <td><span class="badge bg-light text-dark"><?= htmlspecialchars($e['ty'] ?? '—') ?></span></td>
+            <td><?= htmlspecialchars($e['pr'] ?? '—') ?></td>
+            <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><?= htmlspecialchars($e['c'] ?? '—') ?></td>
+            <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"><strong><?= htmlspecialchars($e['dx'] ?? '—') ?></strong></td>
+            <td><span class="badge <?= $e['st']==='Completed'?'bg-success':'bg-primary' ?>"><?= htmlspecialchars($e['st'] ?? '—') ?></span></td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: LAB -->
+<div class="tab-pane fade" id="tab-lab">
+  <div class="section-card">
+    <div class="sc-head">🧪 Laboratory Results</div>
+    <div class="sc-body">
+      <?php if (empty($myLab)): ?>
+      <div class="empty-state"><div class="icon">🧪</div><div>No lab results yet.</div></div>
+      <?php else: ?>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Ref</th><th>Date</th><th>Tests</th><th>Performed By</th><th>Reviewed By</th></tr></thead>
+          <tbody>
+          <?php foreach($myLab as $r):
+            $rows = json_decode($r['rows'] ?? '[]', true) ?: [];
+            $tests = implode(', ', array_filter(array_map(fn($x)=>$x['t']??'', array_slice($rows,0,3))));
+            if (count($rows)>3) $tests .= '…';
+          ?>
+          <tr>
+            <td><strong style="color:#1a6b87"><?= htmlspecialchars($r['ref'] ?? '—') ?></strong></td>
+            <td><?= date('d M Y', strtotime($r['date'])) ?></td>
+            <td style="font-size:12px;color:#5a7a8a"><?= htmlspecialchars($tests ?: '—') ?></td>
+            <td><?= htmlspecialchars($r['by'] ?? '—') ?></td>
+            <td><?= htmlspecialchars($r['reviewed_by'] ?? '—') ?></td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: ULTRASOUND -->
+<div class="tab-pane fade" id="tab-us">
+  <div class="section-card">
+    <div class="sc-head">🔊 Ultrasound Reports</div>
+    <div class="sc-body">
+      <?php if (empty($myUS)): ?>
+      <div class="empty-state"><div class="icon">🔊</div><div>No ultrasound reports yet.</div></div>
+      <?php else: ?>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Ref</th><th>Date</th><th>Scan Type</th><th>Impression</th><th>By</th></tr></thead>
+          <tbody>
+          <?php foreach($myUS as $r): ?>
+          <tr>
+            <td><strong style="color:#1a6b87"><?= htmlspecialchars($r['ref'] ?? '—') ?></strong></td>
+            <td><?= date('d M Y', strtotime($r['date'])) ?></td>
+            <td><?= htmlspecialchars($r['ty'] ?? '—') ?></td>
+            <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic"><?= htmlspecialchars($r['imp'] ?? '—') ?></td>
+            <td><?= htmlspecialchars($r['by'] ?? '—') ?></td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: PRESCRIPTIONS -->
+<div class="tab-pane fade" id="tab-rx">
+  <div class="section-card">
+    <div class="sc-head">💊 Prescriptions</div>
+    <div class="sc-body">
+      <?php if (empty($myRx)): ?>
+      <div class="empty-state"><div class="icon">💊</div><div>No prescriptions yet.</div></div>
+      <?php else: ?>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Ref</th><th>Date</th><th>Clinician</th><th>Diagnosis</th><th>Medications</th></tr></thead>
+          <tbody>
+          <?php foreach($myRx as $r):
+            $meds = json_decode($r['meds'] ?? '[]', true) ?: [];
+            $medStr = implode(', ', array_filter(array_map(fn($m)=>$m['dr']??'', array_slice($meds,0,3))));
+            if(count($meds)>3) $medStr.='…';
+          ?>
+          <tr>
+            <td><strong style="color:#1a6b87"><?= htmlspecialchars($r['ref'] ?? '—') ?></strong></td>
+            <td><?= date('d M Y', strtotime($r['date'])) ?></td>
+            <td><?= htmlspecialchars($r['cl'] ?? '—') ?></td>
+            <td><?= htmlspecialchars($r['dx'] ?? '—') ?></td>
+            <td style="font-size:12px;color:#5a7a8a"><?= htmlspecialchars($medStr ?: '—') ?></td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
+<!-- TAB: BILLING -->
+<div class="tab-pane fade" id="tab-bills">
+  <div class="section-card">
+    <div class="sc-head">💳 Billing Records
+      <?php
+      $totalBilled = array_sum(array_column($myBills,'tot'));
+      $totalPaid   = array_sum(array_column($myBills,'paid'));
+      $totalBal    = $totalBilled - $totalPaid;
+      ?>
+      <?php if ($totalBilled > 0): ?>
+      <span style="font-size:12px;font-weight:400;color:#5a7a8a">
+        Total: <strong style="color:#1a6b87"><?= fmUGX($totalBilled) ?></strong> &nbsp;|&nbsp;
+        Paid: <strong style="color:#1d8a5e"><?= fmUGX($totalPaid) ?></strong> &nbsp;|&nbsp;
+        <?php if($totalBal>0): ?>Balance: <strong style="color:#b5322a"><?= fmUGX($totalBal) ?></strong>
+        <?php else: ?><strong style="color:#1d8a5e">✓ Fully Paid</strong><?php endif; ?>
+      </span>
+      <?php endif; ?>
+    </div>
+    <div class="sc-body">
+      <?php if (empty($myBills)): ?>
+      <div class="empty-state"><div class="icon">💳</div><div>No billing records yet.</div></div>
+      <?php else: ?>
+      <div class="table-responsive">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Invoice</th><th>Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Method</th><th>Status</th></tr></thead>
+          <tbody>
+          <?php foreach($myBills as $b): ?>
+          <tr>
+            <td><strong style="color:#1a6b87"><?= htmlspecialchars($b['ref'] ?? '—') ?></strong></td>
+            <td><?= date('d M Y', strtotime($b['date'])) ?></td>
+            <td><?= fmUGX((float)($b['tot']??0)) ?></td>
+            <td style="color:#1d8a5e"><?= fmUGX((float)($b['paid']??0)) ?></td>
+            <td style="color:<?= ($b['bal']??0)>0?'#b5322a':'#1d8a5e' ?>;font-weight:600"><?= fmUGX((float)($b['bal']??0)) ?></td>
+            <td style="font-size:12px"><?= htmlspecialchars($b['mt'] ?? '—') ?></td>
+            <td><?= billBadge($b['st'] ?? 'Unpaid') ?></td>
+          </tr>
+          <?php endforeach; ?>
+          </tbody>
+        </table>
+      </div>
+      <?php endif; ?>
+    </div>
+  </div>
+</div>
+
+</div><!-- /tab-content -->
+<?php endif; ?>
+</div><!-- /container -->
+
+<!-- APPOINTMENT BOOKING MODAL -->
+<div class="modal fade" id="bookingModal" tabindex="-1">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title fw-bold" style="color:#1a6b87">📅 Book an Appointment</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+      </div>
+      <form method="POST" action="patient.php" id="bookingForm">
+        <input type="hidden" name="action" value="book_appointment">
+        <div class="modal-body">
+          <div id="book-alert" class="alert alert-danger d-none mb-3"></div>
+          <div class="mb-3">
+            <label class="form-label">Preferred Date *</label>
+            <input type="date" name="date" id="book-date" class="form-control" required min="<?= date('Y-m-d') ?>">
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Preferred Time *</label>
+            <input type="time" name="time" id="book-time" class="form-control" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Provider / Department</label>
+            <select name="pr" class="form-select">
+              <option value="Dr. Karim">Dr. Karim (General / OPD)</option>
+              <option value="Physiotherapist">Physiotherapist</option>
+              <option value="Nurse / Clinical Officer">Nurse / Clinical Officer</option>
+              <option value="Lab Technician">Lab Technician</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Appointment Type</label>
+            <select name="ty" class="form-select">
+              <option value="Consultation">Consultation</option>
+              <option value="Follow-up">Follow-up</option>
+              <option value="Physio">Physiotherapy</option>
+              <option value="Ultrasound">Ultrasound</option>
+              <option value="Laboratory">Laboratory</option>
+              <option value="Antenatal">Antenatal</option>
+              <option value="Vaccination">Vaccination</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Reason / Notes</label>
+            <textarea name="n" class="form-control" rows="2" placeholder="Brief reason for your visit…"></textarea>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn-book btn" style="border:none">📅 Submit Appointment Request</button>
+        </div>
+      </form>
+    </div>
+  </div>
 </div>
 
 <script>
-const PATIENT_ID = <?php echo json_encode($patient_id); ?>;
-const PATIENT_NAME = <?php echo json_encode($patient ? $patient['fn'] . ' ' . $patient['ln'] : ''); ?>;
-
-function renderAppointments() {
-    if (!PATIENT_ID) return;
-    const appts = DB.get('appointments').filter(a => a.pid == PATIENT_ID);
-    const list = document.getElementById('appointments-list');
-    if (appts.length === 0) {
-        list.innerHTML = '<p class="text-muted">No appointments yet.</p>';
-        return;
-    }
-    let html = '<div class="table-responsive"><table class="table table-striped">';
-    html += '<thead><tr><th>Date</th><th>Time</th><th>Provider</th><th>Type</th><th>Status</th><th>Notes</th></tr></thead>';
-    html += '<tbody>';
-    for (const a of appts) {
-        let statusBadge = '';
-        switch (a.st) {
-            case 'Pending': statusBadge = '<span class="badge bg-warning text-dark">Pending Approval</span>'; break;
-            case 'Scheduled': statusBadge = '<span class="badge bg-primary">Scheduled</span>'; break;
-            case 'Completed': statusBadge = '<span class="badge bg-success">Completed</span>'; break;
-            case 'Cancelled': statusBadge = '<span class="badge bg-danger">Cancelled</span>'; break;
-            case 'Rejected': statusBadge = '<span class="badge bg-danger">Rejected</span>'; break;
-        }
-        html += `<tr><td>${fd(a.date)}</td><td>${a.time}</td><td>${a.pr}</td><td>${a.ty}</td><td>${statusBadge}</td><td>${a.n || '—'}</td></tr>`;
-    }
-    html += '</tbody></table></div>';
-    list.innerHTML = html;
+function showBookingModal(){
+  document.getElementById('book-date').value = new Date().toISOString().slice(0,10);
+  document.getElementById('book-alert').classList.add('d-none');
+  new bootstrap.Modal(document.getElementById('bookingModal')).show();
 }
-
-function renderEncounters() {
-    if (!PATIENT_ID) return;
-    const encs = DB.get('encounters').filter(e => e.pid == PATIENT_ID);
-    const list = document.getElementById('encounters-list');
-    if (encs.length === 0) {
-        list.innerHTML = '<p class="text-muted">No encounters yet.</p>';
-        return;
-    }
-    let html = '<div class="table-responsive"><table class="table table-striped">';
-    html += '<thead><tr><th>Date</th><th>Type</th><th>Provider</th><th>Complaint</th><th>Diagnosis</th><th>Status</th></tr></thead>';
-    html += '<tbody>';
-    for (const e of encs) {
-        html += `<tr><td>${fd(e.date)}</td><td>${e.ty}</td><td>${e.pr}</td><td>${e.c}</td><td>${e.dx}</td><td><span class="badge ${e.st === 'Completed' ? 'bg-success' : 'bg-primary'}">${e.st}</span></td></tr>`;
-    }
-    html += '</tbody></table></div>';
-    list.innerHTML = html;
-}
-
-function renderLab() {
-    if (!PATIENT_ID) return;
-    const reps = DB.get('lab_rep').filter(r => r.pid == PATIENT_ID);
-    const list = document.getElementById('lab-list');
-    if (reps.length === 0) {
-        list.innerHTML = '<p class="text-muted">No lab reports yet.</p>';
-        return;
-    }
-    let html = '<div class="table-responsive"><table class="table table-striped">';
-    html += '<thead><tr><th>Ref</th><th>Date</th><th>Performed By</th><th>Reviewed By</th></tr></thead>';
-    html += '<tbody>';
-    for (const r of reps) {
-        html += `<tr><td><strong>${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.by || '—'}</td><td>${r.reviewed_by || '—'}</td></tr>`;
-    }
-    html += '</tbody></table></div>';
-    list.innerHTML = html;
-}
-
-function renderUS() {
-    if (!PATIENT_ID) return;
-    const reps = DB.get('us_rep').filter(r => r.pid == PATIENT_ID);
-    const list = document.getElementById('us-list');
-    if (reps.length === 0) {
-        list.innerHTML = '<p class="text-muted">No ultrasound reports yet.</p>';
-        return;
-    }
-    let html = '<div class="table-responsive"><table class="table table-striped">';
-    html += '<thead><tr><th>Ref</th><th>Date</th><th>Type</th><th>Performed By</th></tr></thead>';
-    html += '<tbody>';
-    for (const r of reps) {
-        html += `<tr><td><strong>${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.ty || '—'}</td><td>${r.by || '—'}</td></tr>`;
-    }
-    html += '</tbody></table></div>';
-    list.innerHTML = html;
-}
-
-function renderRx() {
-    if (!PATIENT_ID) return;
-    const rx = DB.get('rx').filter(r => r.pid == PATIENT_ID);
-    const list = document.getElementById('rx-list');
-    if (rx.length === 0) {
-        list.innerHTML = '<p class="text-muted">No prescriptions yet.</p>';
-        return;
-    }
-    let html = '<div class="table-responsive"><table class="table table-striped">';
-    html += '<thead><tr><th>Ref</th><th>Date</th><th>Clinician</th><th>Diagnosis</th></tr></thead>';
-    html += '<tbody>';
-    for (const r of rx) {
-        html += `<tr><td><strong>${r.ref}</strong></td><td>${fd(r.date)}</td><td>${r.cl || '—'}</td><td>${r.dx || '—'}</td></tr>`;
-    }
-    html += '</tbody></table></div>';
-    list.innerHTML = html;
-}
-
-function renderBilling() {
-    if (!PATIENT_ID) return;
-    const bills = DB.get('billing').filter(b => b.pid == PATIENT_ID);
-    const list = document.getElementById('billing-list');
-    if (bills.length === 0) {
-        list.innerHTML = '<p class="text-muted">No billing records yet.</p>';
-        return;
-    }
-    let html = '<div class="table-responsive"><table class="table table-striped">';
-    html += '<thead><tr><th>Ref</th><th>Date</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th></tr></thead>';
-    html += '<tbody>';
-    for (const b of bills) {
-        let statusBadge = '';
-        switch (b.st) {
-            case 'Paid': statusBadge = '<span class="badge bg-success">Paid</span>'; break;
-            case 'Partial': statusBadge = '<span class="badge bg-warning text-dark">Partial</span>'; break;
-            case 'Unpaid': statusBadge = '<span class="badge bg-danger">Unpaid</span>'; break;
-        }
-        html += `<tr><td><strong>${b.ref}</strong></td><td>${fd(b.date)}</td><td>UGX ${(b.tot || 0).toLocaleString()}</td><td>UGX ${(b.paid || 0).toLocaleString()}</td><td>UGX ${(b.bal || 0).toLocaleString()}</td><td>${statusBadge}</td></tr>`;
-    }
-    html += '</tbody></table></div>';
-    list.innerHTML = html;
-}
-
-function openAppointmentForm() {
-    document.getElementById('appt-date').value = td();
-    const modal = new bootstrap.Modal(document.getElementById('appointmentModal'));
-    modal.show();
-}
-
-function saveAppointment() {
-    if (!PATIENT_ID) { alert('No patient record found!'); return; }
-    const date = document.getElementById('appt-date').value;
-    const time = document.getElementById('appt-time').value;
-    const pr = document.getElementById('appt-pr').value;
-    const ty = document.getElementById('appt-ty').value;
-    const n = document.getElementById('appt-n').value;
-    
-    if (!date || !time) { alert('Please select date and time!'); return; }
-    
-    const appts = DB.get('appointments');
-    appts.unshift({
-        id: DB.id(),
-        pid: PATIENT_ID,
-        pn: PATIENT_NAME,
-        date,
-        time,
-        pr,
-        ty,
-        n,
-        st: 'Pending'
-    });
-    DB.set('appointments', appts);
-    
-    const modal = bootstrap.Modal.getInstance(document.getElementById('appointmentModal'));
-    modal.hide();
-    renderAppointments();
-    alert('Appointment booked! Pending approval from reception.');
-}
-
-// Initial render
-document.addEventListener('DOMContentLoaded', () => {
-    renderAppointments();
-    renderEncounters();
-    renderLab();
-    renderUS();
-    renderRx();
-    renderBilling();
+<?php if(isset($_GET['booked'])): ?>
+document.addEventListener('DOMContentLoaded',()=>{
+  const t=document.getElementById('liveToast');
+  document.getElementById('toastMsg').textContent='✓ Appointment request submitted! Reception will confirm it shortly.';
+  t.classList.remove('text-bg-success'); t.classList.add('text-bg-success');
+  new bootstrap.Toast(t,{delay:6000}).show();
 });
+<?php endif; ?>
+<?php if(isset($_GET['error'])): ?>
+document.addEventListener('DOMContentLoaded',()=>{
+  const t=document.getElementById('liveToast');
+  document.getElementById('toastMsg').textContent='<?= htmlspecialchars($_GET['error']) ?>';
+  t.classList.remove('text-bg-success'); t.classList.add('text-bg-danger');
+  new bootstrap.Toast(t,{delay:5000}).show();
+});
+<?php endif; ?>
 </script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 </body>

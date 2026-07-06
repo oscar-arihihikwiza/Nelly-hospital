@@ -30,7 +30,7 @@ require_once 'header.php';
 <!-- MODULE: APPOINTMENTS -->
 <div class="page phide" id="pg-appointments">
         <div class="fxb mb12 np">
-          <div class="fxc"><div class="tabs"><button class="tab on" id="at-all" onclick="setAF('all')">All</button><button class="tab" id="at-Scheduled" onclick="setAF('Scheduled')">Scheduled</button><button class="tab" id="at-Completed" onclick="setAF('Completed')">Completed</button></div><input type="date" class="fi" id="adf" style="width:145px" onchange="renderAppts()"></div>
+          <div class="fxc"><div class="tabs"><button class="tab on" id="at-all" onclick="setAF('all')">All</button><button class="tab" id="at-Pending" onclick="setAF('Pending')">Pending</button><button class="tab" id="at-Scheduled" onclick="setAF('Scheduled')">Scheduled</button><button class="tab" id="at-Completed" onclick="setAF('Completed')">Completed</button></div><input type="date" class="fi" id="adf" style="width:145px" onchange="renderAppts()"></div>
           <button class="btn btnp" onclick="openAppt()"><svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 2v10M2 7h10" stroke-linecap="round"/></svg>New Appointment</button>
         </div>
         <div class="card"><div class="tw"><table><thead><tr><th>Date</th><th>Time</th><th>Patient</th><th>Provider</th><th>Type</th><th>Notes</th><th>Status</th><th></th></tr></thead><tbody id="atbody"></tbody></table></div></div>

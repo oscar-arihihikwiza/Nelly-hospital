@@ -21,7 +21,8 @@ $nav_items = [
     'discharge' => ['lb' => 'Discharge', 'ico' => 'discharge'],
     'finance' => ['lb' => 'Finance', 'ico' => 'finance'],
     'otc' => ['lb' => 'OTC Sales', 'ico' => 'otc'],
-    'staff' => ['lb' => 'Staff Management', 'ico' => 'dashboard']
+    'staff'  => ['lb' => 'Staff Management', 'ico' => 'staff'],
+    'backup' => ['lb' => 'Backup & Restore',  'ico' => 'backup'],
 ];
 
 // SVG Icons matching the original HAK Medical design
@@ -37,7 +38,9 @@ $nav_icons = [
     'billing' => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="3.5" width="14" height="9" rx="2"/><path d="M1 7.5h14M5 11h2M10 11h1" stroke-linecap="round"/></svg>',
     'finance' => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12V5a1 1 0 011-1h12a1 1 0 011 1v7a1 1 0 01-1 1H2a1 1 0 01-1-1z"/><path d="M5 8h6M8 6v4" stroke-linecap="round"/><circle cx="8" cy="8" r="2.5"/></svg>',
     'discharge' => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 2h10a1 1 0 011 1v11l-3-2-2 2-2-2-3 2V3a1 1 0 011-1z"/><path d="M6 6h4M6 9h3" stroke-linecap="round"/></svg>',
-    'otc' => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12l-1 9H3L2 4z"/><path d="M6 4V3a2 2 0 014 0v1M6 8h.01M10 8h.01" stroke-linecap="round"/></svg>'
+    'otc' => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 4h12l-1 9H3L2 4z"/><path d="M6 4V3a2 2 0 014 0v1M6 8h.01M10 8h.01" stroke-linecap="round"/></svg>',
+    'staff'  => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="5" r="2"/><circle cx="10" cy="5" r="2"/><path d="M3 12c0-2.2 1.8-4 4-4h2c2.2 0 4 1.8 4 4" stroke-linecap="round"/></svg>',
+    'backup' => '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2v8M5 8l3 3 3-3" stroke-linecap="round" stroke-linejoin="round"/><path d="M2 12v1a1 1 0 001 1h10a1 1 0 001-1v-1" stroke-linecap="round"/></svg>',
 ];
 ?>
 <!DOCTYPE html>
@@ -51,14 +54,14 @@ $nav_icons = [
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link rel="stylesheet" href="index.css">
 <script>
-// Expose the server session user state to JavaScript
-const CU = {
+// Expose server data to app.js — use var (not const) to avoid scope conflicts
+var SERVER_DB = <?php echo get_database_json(); ?>;
+window._SERVER_CU = {
   username: <?php echo json_encode($user['username']); ?>,
-  name: <?php echo json_encode($user['name']); ?>,
-  role: <?php echo json_encode($user['role']); ?>
+  name:     <?php echo json_encode($user['name']); ?>,
+  role:     <?php echo json_encode($user['role']); ?>
 };
-sessionStorage.setItem('hak_u', JSON.stringify(CU));
-const SERVER_DB = <?php echo get_database_json(); ?>;
+sessionStorage.setItem('hak_u', JSON.stringify(window._SERVER_CU));
 </script>
 </head>
 <body>
@@ -80,11 +83,30 @@ const SERVER_DB = <?php echo get_database_json(); ?>;
       global $ROLE_PERMISSIONS;
       foreach ($nav_items as $id => $item) {
           // Check server-side permissions: user role must be allowed for this module
-          if (in_array($user['role'], $ROLE_PERMISSIONS[$id]) || $user['role'] === 'admin') {
-              echo "<div class='sbi' id='sbn-{$id}' onclick='nav(\"{$id}\")'>";
-              echo "<div class='sbico'>{$nav_icons[$item['ico']]}</div>";
-              echo htmlspecialchars($item['lb']);
-              echo "</div>";
+          $allowed = false;
+          if ($user['role'] === 'admin') {
+              $allowed = true;
+          } elseif (isset($ROLE_PERMISSIONS[$id])) {
+              $allowed = in_array($user['role'], $ROLE_PERMISSIONS[$id]);
+          }
+          
+          if ($allowed) {
+              // Backup links directly to backup.php page
+              if ($id === 'backup') {
+                  echo "<a class='sbi' id='sbn-{$id}' href='backup.php' style='text-decoration:none;color:inherit'>";
+                  $icon_key = $item['ico'];
+                  $icon = isset($nav_icons[$icon_key]) ? $nav_icons[$icon_key] : '';
+                  echo "<div class='sbico'>{$icon}</div>";
+                  echo htmlspecialchars($item['lb']);
+                  echo "</a>";
+              } else {
+                  echo "<div class='sbi' id='sbn-{$id}' onclick='nav(\"{$id}\")'>";
+                  $icon_key = $item['ico'];
+                  $icon = isset($nav_icons[$icon_key]) ? $nav_icons[$icon_key] : '';
+                  echo "<div class='sbico'>{$icon}</div>";
+                  echo htmlspecialchars($item['lb']);
+                  echo "</div>";
+              }
           }
       }
       ?>
@@ -109,6 +131,12 @@ const SERVER_DB = <?php echo get_database_json(); ?>;
       <div class="tbtitle" id="tbtitle">Dashboard</div>
       <div class="tbdate" id="tbdate"><?php echo date('D, j M Y'); ?></div>
       <div style="display:flex;gap:7px" id="tbact"></div>
+      <button class="btn btno sm np" onclick="refreshDataFromServer()" title="Refresh data from server" style="margin-right:4px">
+        <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8" width="13" height="13">
+          <path d="M12 7A5 5 0 112 7" stroke-linecap="round"/><path d="M12 3v4h-4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Refresh
+      </button>
       <button class="btn btno sm np" onclick="downloadBackup()" title="Download data backup">
         <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M7 2v7M4 7l3 3 3-3M2 11h10" stroke-linecap="round" stroke-linejoin="round"/>

@@ -124,14 +124,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, ['approve_appoint
     }
     
     try {
-        // Get the appointment and patient info
-        $stmt = $pdo->prepare("
-            SELECT a.*, p.fn, p.ln, p.email 
-            FROM appointments a 
-            JOIN patients p ON a.pid = p.id 
-            WHERE a.id = ?
-        ");
-        $stmt->execute([$appt_id]);
+        // Get the appointment (id may be a string from JS or integer from SQLite)
+        $stmt = $pdo->prepare("SELECT * FROM appointments WHERE id = ? OR CAST(id AS TEXT) = ?");
+        $stmt->execute([$appt_id, $appt_id]);
         $appt = $stmt->fetch();
         
         if (!$appt) {
@@ -141,24 +136,84 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, ['approve_appoint
         
         $new_status = $action === 'approve_appointment' ? 'Scheduled' : 'Rejected';
         
-        // Update the appointment
-        $updateStmt = $pdo->prepare("UPDATE appointments SET st = ? WHERE id = ?");
-        $updateStmt->execute([$new_status, $appt_id]);
+        // Update the appointment by both possible id forms
+        $updateStmt = $pdo->prepare("UPDATE appointments SET st = ? WHERE id = ? OR CAST(id AS TEXT) = ?");
+        $updateStmt->execute([$new_status, $appt_id, $appt_id]);
         
-        // Send email notification
-        $patientName = $appt['fn'] . ' ' . $appt['ln'];
+        // Try to get patient email for notification
+        $patientEmail = null;
+        $patientName = $appt['pn'] ?? '';
+        if (!empty($appt['pid'])) {
+            $pStmt = $pdo->prepare("SELECT fn, ln, email FROM patients WHERE id = ? OR CAST(id AS TEXT) = ?");
+            $pStmt->execute([$appt['pid'], $appt['pid']]);
+            $pat = $pStmt->fetch();
+            if ($pat) {
+                $patientName = $pat['fn'] . ' ' . $pat['ln'];
+                $patientEmail = $pat['email'] ?? null;
+            }
+        }
+        
+        // Send email notification (best-effort)
         $statusLabel = $action === 'approve_appointment' ? 'approved' : 'rejected';
-        send_appointment_email(
-            $patientName,
-            $appt['email'],
-            $appt['date'],
-            $appt['time'],
-            $appt['ty'],
-            $statusLabel,
-            $notes
-        );
+        if ($patientEmail) {
+            send_appointment_email(
+                $patientName,
+                $patientEmail,
+                $appt['date'],
+                $appt['time'],
+                $appt['ty'],
+                $statusLabel,
+                $notes
+            );
+        }
         
-        echo json_encode(['success' => true]);
+        echo json_encode(['success' => true, 'new_status' => $new_status]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
+    exit;
+}
+
+// Record a payment against an existing invoice
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'record_payment') {
+    check_access(['admin', 'billing', 'reception']);
+    $invoice_id = $_POST['invoice_id'] ?? '';
+    $amount     = floatval($_POST['amount'] ?? 0);
+    $method     = $_POST['method'] ?? 'Cash';
+    $ref        = $_POST['ref'] ?? '';
+    $pay_date   = $_POST['pay_date'] ?? date('Y-m-d');
+    
+    if (empty($invoice_id) || $amount <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Invoice ID and valid amount required']);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare("SELECT * FROM billing_invoices WHERE id = ? OR CAST(id AS TEXT) = ?");
+        $stmt->execute([$invoice_id, $invoice_id]);
+        $inv = $stmt->fetch();
+        
+        if (!$inv) {
+            echo json_encode(['success' => false, 'error' => 'Invoice not found']);
+            exit;
+        }
+        
+        // Decode existing payments
+        $payments = json_decode($inv['payments'] ?? '[]', true);
+        if (!is_array($payments)) $payments = [];
+        $payments[] = ['a' => $amount, 'm' => $method, 'd' => $pay_date, 'n' => $ref];
+        
+        $new_paid = $inv['paid'] + $amount;
+        $new_bal  = $inv['tot'] - $new_paid;
+        if ($new_bal < 0) $new_bal = 0;
+        $new_status = $new_paid <= 0 ? 'Unpaid' : ($new_bal > 0 ? 'Partial' : 'Paid');
+        $new_mt_parts = array_map(function($p){ return $p['m']; }, $payments);
+        $new_mt = implode(' + ', array_unique($new_mt_parts));
+        
+        $upd = $pdo->prepare("UPDATE billing_invoices SET paid = ?, bal = ?, st = ?, mt = ?, payments = ? WHERE id = ? OR CAST(id AS TEXT) = ?");
+        $upd->execute([$new_paid, $new_bal, $new_status, $new_mt, json_encode($payments), $invoice_id, $invoice_id]);
+        
+        echo json_encode(['success' => true, 'new_paid' => $new_paid, 'new_bal' => $new_bal, 'new_status' => $new_status]);
     } catch (Exception $e) {
         echo json_encode(['success' => false, 'error' => $e->getMessage()]);
     }
@@ -167,6 +222,41 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && in_array($action, ['approve_appoint
 
 if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'get') {
     echo get_database_json();
+    exit;
+}
+
+// Book appointment (patient portal via AJAX)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'book_appointment') {
+    check_login();
+    $user = $_SESSION['user'];
+    if ($user['role'] !== 'patient') {
+        echo json_encode(['success' => false, 'error' => 'Patients only']);
+        exit;
+    }
+    $pdo2   = get_pdo();
+    $stmt   = $pdo2->prepare('SELECT id, fn, ln FROM patients WHERE fn || " " || ln = ? LIMIT 1');
+    $stmt->execute([$user['name']]);
+    $pat    = $stmt->fetch();
+    if (!$pat) {
+        echo json_encode(['success' => false, 'error' => 'Patient record not found']);
+        exit;
+    }
+    $date = trim($_POST['date'] ?? '');
+    $time = trim($_POST['time'] ?? '');
+    $pr   = trim($_POST['pr']   ?? 'Dr. Karim');
+    $ty   = trim($_POST['ty']   ?? 'Consultation');
+    $n    = trim($_POST['n']    ?? '');
+    if (!$date || !$time) {
+        echo json_encode(['success' => false, 'error' => 'Date and time required']);
+        exit;
+    }
+    try {
+        $ins = $pdo2->prepare('INSERT INTO appointments (pid, pn, date, time, pr, ty, n, st) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+        $ins->execute([$pat['id'], $pat['fn'].' '.$pat['ln'], $date, $time, $pr, $ty, $n, 'Pending']);
+        echo json_encode(['success' => true]);
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'error' => $e->getMessage()]);
+    }
     exit;
 }
 

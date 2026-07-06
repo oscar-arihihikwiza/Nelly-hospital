@@ -54,10 +54,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             throw new Exception($error);
         }
         
-        // Generate OPD number
-        $stmt = $pdo->query('SELECT COUNT(*) as cnt FROM patients');
-        $row = $stmt->fetch();
-        $opd = 'HAK-' . str_pad($row['cnt'] + 1, 3, '0', STR_PAD_LEFT);
+        // Generate OPD number using MAX to avoid collisions
+        $stmt = $pdo->query("SELECT MAX(CAST(REPLACE(opd,'HAK-','') AS INTEGER)) as mx FROM patients WHERE opd LIKE 'HAK-%'");
+        $row  = $stmt->fetch();
+        $next = ($row['mx'] ?? 0) + 1;
+        $opd  = 'HAK-' . str_pad($next, 3, '0', STR_PAD_LEFT);
         
         // Create patient record
         $stmt = $pdo->prepare('INSERT INTO patients (opd, fn, ln, age, sex, ph, ad, bl, ins, al, pmh, em, oc, created, nin, email) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
